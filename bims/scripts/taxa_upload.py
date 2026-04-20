@@ -1370,6 +1370,10 @@ class TaxaProcessor(object):
                         preserve_taxonomic_status=False
                     )
 
+            if accepted_taxon and accepted_taxon.accepted_taxonomy:
+                accepted_taxon.accepted_taxonomy = None
+                accepted_taxon.save(update_fields=['accepted_taxonomy'])
+
             if accepted_taxon:
                 self._update_taxon_and_proposal(taxonomy, proposal, use_proposal, new_taxon, 'accepted_taxonomy', accepted_taxon)
 

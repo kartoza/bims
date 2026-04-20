@@ -456,6 +456,7 @@ class AddNewTaxon(LoginRequiredMixin, APIView):
                 exclude=[
                     'id',
                     'iucn_status',
+                    'national_conservation_status',
                     'vernacular_names',
                     'author',
                     'tags',
@@ -481,6 +482,7 @@ class AddNewTaxon(LoginRequiredMixin, APIView):
                     taxon_group_under_review=taxon_group,
                     author=proposal_author,
                     iucn_status=taxonomy.iucn_status,
+                    national_conservation_status=taxonomy.national_conservation_status,
                     last_modified_by=self.request.user,
                     origin=taxonomy.origin,
                     endemism=taxonomy.endemism,
