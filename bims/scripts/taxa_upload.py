@@ -743,7 +743,10 @@ class TaxaProcessor(object):
         if is_species:
             subgenus = _safe_strip(self.get_row_value(row, SUBGENUS))
 
-        if is_species and subgenus:
+        # Subgenus species are not fetched by name from GBIF (GBIF doesn't
+        # distinguish subgenus in name lookups), but synonyms still need GBIF
+        # to resolve acceptedKey, so allow fetching for them.
+        if is_species and subgenus and not (is_synonym or is_doubtful):
             should_fetch_from_gbif = False
 
         # on_gbif flag
@@ -1009,9 +1012,19 @@ class TaxaProcessor(object):
 
             if taxa.exists():
                 if is_species and subgenus and not taxa_found_by_id:
-                    taxa = taxa.filter(
+                    taxa_with_subgenus = taxa.filter(
                         subgenus__canonical_name__iexact=subgenus
                     )
+                    if taxa_with_subgenus.exists():
+                        taxa = taxa_with_subgenus
+                    elif is_synonym or is_doubtful:
+                        # A synonym may share a canonical name with an accepted taxon
+                        # of a different subgenus. Prefer existing records that have
+                        # no subgenus set (previously imported synonyms lacking this
+                        # data) over wrongly matching a different-subgenus accepted taxon.
+                        taxa = taxa.filter(subgenus__isnull=True)
+                    else:
+                        taxa = taxa_with_subgenus  # empty — new taxon will be created
                 taxa_same_rank = taxa.filter(rank=_safe_upper(rank))
 
                 if taxa_same_rank.exists():

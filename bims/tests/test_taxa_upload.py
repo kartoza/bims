@@ -821,6 +821,165 @@ class TestSubgenusUpload(FastTenantTestCase):
         )
         self.assertEqual(result, 'Stegomyia')
 
+    @mock.patch('bims.scripts.taxa_upload.get_species')
+    @mock.patch('bims.scripts.taxa_upload.fetch_all_species_from_gbif')
+    def test_synonym_with_subgenus_allows_gbif_fetch(
+        self, mock_fetch_gbif, mock_get_species
+    ):
+        """
+        A synonym with a SubGenus value must NOT have should_fetch_from_gbif
+        suppressed — synonyms still need GBIF to resolve acceptedKey.
+        """
+        mock_fetch_gbif.return_value = None
+        mock_get_species.return_value = None
+
+        row = {
+            'Taxon Rank': 'Species',
+            'Kingdom': 'Animalia',
+            'Phylum': 'Arthropoda',
+            'Class': 'Insecta',
+            'Order': 'Diptera',
+            'Family': 'Culicidae',
+            'Genus': 'Aedes',
+            'SubGenus': 'Stegomyia',
+            'Taxon': 'Aedes aegypti syn',
+            'Taxonomic status': 'SYNONYM',
+            'On GBIF': 'Yes',
+            'Author(s)': '',
+        }
+
+        processor = TaxaProcessor()
+        processor.all_keys = {}
+        with mock.patch('bims.scripts.taxa_upload.preferences') as mock_prefs:
+            mock_prefs.SiteSetting.auto_validate_taxa_on_upload = True
+            processor.process_data(row, TaxonGroupF.create())
+
+        species_calls = [
+            c for c in mock_fetch_gbif.call_args_list
+            if c.kwargs.get('taxonomic_rank', '').upper() == 'SPECIES'
+        ]
+        self.assertGreater(
+            len(species_calls), 0,
+            'GBIF should be consulted for synonym SPECIES with subgenus — '
+            'should_fetch_from_gbif must not be suppressed for synonyms.'
+        )
+
+    @mock.patch('bims.scripts.taxa_upload.get_species')
+    @mock.patch('bims.scripts.taxa_upload.fetch_all_species_from_gbif')
+    def test_synonym_same_name_different_subgenus_matches_null_subgenus_record(
+        self, mock_fetch_gbif, mock_get_species
+    ):
+        """
+        A synonym that shares a canonical name with an accepted taxon of a
+        different subgenus should match an existing synonym record that has
+        no subgenus set (pre-subgenus-support import), not create a duplicate.
+        """
+        mock_fetch_gbif.return_value = None
+        mock_get_species.return_value = None
+
+        subgenus_a = TaxonomyF.create(canonical_name='SubGenusA', rank='SUBGENUS')
+        TaxonomyF.create(
+            canonical_name='Culex duplicatus',
+            scientific_name='Culex duplicatus',
+            rank='SPECIES',
+            subgenus=subgenus_a,
+            taxonomic_status='ACCEPTED',
+        )
+        existing_synonym = TaxonomyF.create(
+            canonical_name='Culex duplicatus',
+            scientific_name='Culex duplicatus',
+            rank='SPECIES',
+            taxonomic_status='SYNONYM',
+        )
+
+        row = {
+            'Taxon Rank': 'Species',
+            'Kingdom': 'Animalia',
+            'Phylum': 'Arthropoda',
+            'Class': 'Insecta',
+            'Order': 'Diptera',
+            'Family': 'Culicidae',
+            'Genus': 'Culex',
+            'SubGenus': 'SubGenusB',
+            'Taxon': 'Culex duplicatus',
+            'Taxonomic status': 'SYNONYM',
+            'On GBIF': 'No',
+            'Author(s)': '',
+        }
+
+        processor = TaxaProcessor()
+        processor.all_keys = {}
+        with mock.patch('bims.scripts.taxa_upload.preferences') as mock_prefs:
+            mock_prefs.SiteSetting.auto_validate_taxa_on_upload = True
+            processor.process_data(row, TaxonGroupF.create())
+
+        self.assertEqual(
+            Taxonomy.objects.filter(
+                canonical_name='Culex duplicatus',
+                taxonomic_status='SYNONYM',
+            ).count(),
+            1,
+            'Null-subgenus fallback should reuse existing synonym, not create a duplicate.'
+        )
+
+    @mock.patch('bims.scripts.taxa_upload.get_species')
+    @mock.patch('bims.scripts.taxa_upload.fetch_all_species_from_gbif')
+    def test_synonym_no_null_subgenus_match_creates_new_taxon(
+        self, mock_fetch_gbif, mock_get_species
+    ):
+        """
+        When a synonym shares a name with an accepted taxon of a different
+        subgenus and no null-subgenus synonym exists in the DB, a new separate
+        synonym taxon is created rather than merging with the accepted taxon.
+        """
+        mock_fetch_gbif.return_value = None
+        mock_get_species.return_value = None
+
+        subgenus_a = TaxonomyF.create(canonical_name='SubA', rank='SUBGENUS')
+        TaxonomyF.create(
+            canonical_name='Culex unicus',
+            scientific_name='Culex unicus',
+            rank='SPECIES',
+            subgenus=subgenus_a,
+            taxonomic_status='ACCEPTED',
+        )
+
+        row = {
+            'Taxon Rank': 'Species',
+            'Kingdom': 'Animalia',
+            'Phylum': 'Arthropoda',
+            'Class': 'Insecta',
+            'Order': 'Diptera',
+            'Family': 'Culicidae',
+            'Genus': 'Culex',
+            'SubGenus': 'SubB',
+            'Taxon': 'Culex unicus',
+            'Taxonomic status': 'SYNONYM',
+            'On GBIF': 'No',
+            'Author(s)': '',
+        }
+
+        processor = TaxaProcessor()
+        processor.all_keys = {}
+        with mock.patch('bims.scripts.taxa_upload.preferences') as mock_prefs:
+            mock_prefs.SiteSetting.auto_validate_taxa_on_upload = True
+            processor.process_data(row, TaxonGroupF.create())
+
+        synonym = Taxonomy.objects.filter(
+            canonical_name='Culex unicus',
+            taxonomic_status='SYNONYM',
+        ).first()
+        self.assertIsNotNone(synonym, 'A new synonym taxon should be created.')
+
+        accepted = Taxonomy.objects.get(
+            canonical_name='Culex unicus',
+            taxonomic_status='ACCEPTED',
+        )
+        self.assertNotEqual(
+            synonym.pk, accepted.pk,
+            'Synonym must be a separate record from the accepted taxon.'
+        )
+
     def test_choose_taxon_display_name_subgenus_falls_back_to_composed(self):
         """
         When the SubGenus column is empty, _choose_taxon_display_name should
@@ -847,3 +1006,150 @@ class TestSubgenusUpload(FastTenantTestCase):
             composed_taxon='Aedes subgenus',
         )
         self.assertEqual(result, 'Aedes subgenus')
+
+
+class TestAcceptedTaxonResolution(FastTenantTestCase):
+    """Tests for gbif_data refresh and accepted taxon validation in process_data."""
+
+    def setUp(self):
+        self.taxon_group = TaxonGroupF.create()
+        for key in ('indigenous', 'alien', 'unknown', 'alien-invasive', 'alien-non-invasive'):
+            from bims.models.taxon_origin import TaxonOrigin
+            TaxonOrigin.objects.get_or_create(
+                origin_key=key, defaults={'category': key}
+            )
+
+    def _synonym_row(self, taxon_name='Aedes testus', **kwargs):
+        row = {
+            'Taxon Rank': 'Species',
+            'Kingdom': 'Animalia',
+            'Phylum': 'Arthropoda',
+            'Class': 'Insecta',
+            'Order': 'Diptera',
+            'Family': 'Culicidae',
+            'Genus': 'Aedes',
+            'SubGenus': '',
+            'Taxon': taxon_name,
+            'Taxonomic status': 'SYNONYM',
+            'On GBIF': 'No',
+            'Author(s)': '',
+        }
+        row.update(kwargs)
+        return row
+
+    def _run(self, row):
+        processor = TaxaProcessor()
+        processor.all_keys = {}
+        with mock.patch('bims.scripts.taxa_upload.preferences') as mock_prefs:
+            mock_prefs.SiteSetting.auto_validate_taxa_on_upload = True
+            processor.process_data(row, self.taxon_group)
+
+    @mock.patch('bims.scripts.taxa_upload.get_species')
+    @mock.patch('bims.scripts.taxa_upload.fetch_all_species_from_gbif')
+    def test_existing_taxon_gbif_data_is_refreshed(
+        self, mock_fetch_gbif, mock_get_species
+    ):
+        """
+        Existing taxa have gbif_data refreshed via get_species so stale
+        cached data does not prevent accepted-taxon resolution.
+        """
+        mock_fetch_gbif.return_value = None
+        fresh_data = {'key': 11111, 'acceptedKey': 99999}
+        mock_get_species.return_value = fresh_data
+
+        existing = TaxonomyF.create(
+            canonical_name='Aedes testus',
+            scientific_name='Aedes testus',
+            rank='SPECIES',
+            gbif_key=11111,
+            gbif_data={'key': 11111},  # stale — no acceptedKey
+            taxonomic_status='SYNONYM',
+        )
+
+        self._run(self._synonym_row())
+
+        existing.refresh_from_db()
+        self.assertEqual(existing.gbif_data, fresh_data)
+        mock_get_species.assert_called_with(11111)
+
+    @mock.patch('bims.scripts.taxa_upload.get_species')
+    @mock.patch('bims.scripts.taxa_upload.fetch_all_species_from_gbif')
+    def test_stale_gbif_data_missing_accepted_key_resolved_via_fresh_fetch(
+        self, mock_fetch_gbif, mock_get_species
+    ):
+        """
+        When cached gbif_data has no acceptedKey, the fresh get_species call
+        should provide it and accepted_taxonomy should be set accordingly.
+        """
+        mock_fetch_gbif.return_value = None
+
+        accepted = TaxonomyF.create(
+            canonical_name='Accepted Species',
+            scientific_name='Accepted Species',
+            rank='SPECIES',
+            gbif_key=88888,
+            taxonomic_status='ACCEPTED',
+        )
+        existing_synonym = TaxonomyF.create(
+            canonical_name='Aedes testus',
+            scientific_name='Aedes testus',
+            rank='SPECIES',
+            gbif_key=11111,
+            gbif_data={'key': 11111},  # stale — no acceptedKey
+            taxonomic_status='SYNONYM',
+        )
+        mock_get_species.return_value = {'key': 11111, 'acceptedKey': 88888}
+
+        self._run(self._synonym_row())
+
+        existing_synonym.refresh_from_db()
+        self.assertEqual(
+            existing_synonym.accepted_taxonomy_id,
+            accepted.pk,
+            'Accepted taxon should be resolved via fresh gbif_data after stale cache miss.'
+        )
+
+    @mock.patch('bims.scripts.taxa_upload.get_species')
+    @mock.patch('bims.scripts.taxa_upload.fetch_all_species_from_gbif')
+    def test_accepted_taxon_with_accepted_taxonomy_is_cleared(
+        self, mock_fetch_gbif, mock_get_species
+    ):
+        """
+        If the resolved accepted_taxon itself has accepted_taxonomy set (an
+        invalid state — it would be a synonym, not an accepted taxon), that
+        field is cleared before the assignment.
+        """
+        mock_fetch_gbif.return_value = None
+
+        real_accepted = TaxonomyF.create(
+            canonical_name='True Accepted',
+            scientific_name='True Accepted',
+            rank='SPECIES',
+            gbif_key=77777,
+            taxonomic_status='ACCEPTED',
+        )
+        wrong_accepted = TaxonomyF.create(
+            canonical_name='Wrong Accepted',
+            scientific_name='Wrong Accepted',
+            rank='SPECIES',
+            gbif_key=99999,
+            accepted_taxonomy=real_accepted,  # invalid: accepted taxon should not have this
+            taxonomic_status='ACCEPTED',
+        )
+        existing_synonym = TaxonomyF.create(
+            canonical_name='Aedes testus',
+            scientific_name='Aedes testus',
+            rank='SPECIES',
+            gbif_key=11111,
+            gbif_data={'key': 11111, 'acceptedKey': 99999},
+            taxonomic_status='SYNONYM',
+        )
+        mock_get_species.return_value = {'key': 11111, 'acceptedKey': 99999}
+
+        self._run(self._synonym_row())
+
+        wrong_accepted.refresh_from_db()
+        self.assertIsNone(
+            wrong_accepted.accepted_taxonomy,
+            'accepted_taxonomy on the resolved accepted taxon must be cleared.'
+        )
