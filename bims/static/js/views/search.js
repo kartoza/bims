@@ -32,6 +32,7 @@ define([
             'referenceCategory': false,
             'gbifDataset': false
         },
+        initialSelectedCategory: [],
         initialSelectedStudyReference: [],
         initialSelectedCollectors: [],
         initialSelectedDST: [],
@@ -276,6 +277,10 @@ define([
                     }
                     Shared.InvasiveList = invasiveList;
                     self.filtersReady['invasions'] = true;
+
+                    if (self.initialSelectedCategory.includes('alien') && self.initialSelectedInvasions.length == 0) {
+                        $('#all-invasive-checkbox').trigger("click");
+                    }
                 }
             });
 
@@ -549,6 +554,9 @@ define([
                 invasionsValue = '';
             } else {
                 invasionsValue = JSON.stringify(invasionsValue);
+            }
+            if ($('#all-invasive-checkbox').prop('checked')) {
+                invasionsValue = '';
             }
             filterParameters['invasions'] = invasionsValue;
             self.highlightPanel('#origin-filter-wrapper', invasionsValue.length > 0 || categoryValue.length > 0);
@@ -1000,6 +1008,7 @@ define([
                     if (category === 'alien' || category === 'translocated') {
                         nonNativeSelected = true;
                     }
+                    self.initialSelectedCategory.push(category);
                 });
                 if (nonNativeSelected) {
                     $('#non-native-origin-btn').addClass('selected');
@@ -1040,7 +1049,7 @@ define([
                 self.initialSelectedDST = JSON.parse(allFilters['dst']);
             }
 
-            // Study referebce
+            // Study reference
             self.initialSelectedStudyReference = [];
             if (allFilters.hasOwnProperty('reference')) {
                 self.initialSelectedStudyReference = JSON.parse(allFilters['reference']);
