@@ -306,10 +306,11 @@ class EditSourceReferenceView(UserPassesTestMixin, UpdateView):
             name_key = f'author_{idx}'
 
             if id_key in post_dict and post_dict[id_key].strip():
+                user = get_user_model().objects.get(
+                    id=post_dict[id_key].strip()
+                )
+                author_obj = None
                 try:
-                    user = get_user_model().objects.get(
-                        id=post_dict[id_key].strip()
-                    )
                     author_obj, _ = Author.objects.get_or_create(
                         user=user,
                         defaults={
@@ -317,20 +318,28 @@ class EditSourceReferenceView(UserPassesTestMixin, UpdateView):
                             'last_name': user.last_name,
                         }
                     )
+                except Author.MultipleObjectsReturned:
+                    author_obj = Author.objects.filter(
+                        user=user
+                    ).first()
+                if author_obj:
                     author_objects.append(author_obj)
-                except get_user_model().DoesNotExist:
-                    pass
             elif name_key in post_dict and post_dict[name_key].strip():
                 raw = post_dict[name_key].strip()
                 user = self.get_user_from_string(raw)
                 if user:
-                    author_obj, _ = Author.objects.get_or_create(
-                        user=user,
-                        defaults={
-                            'first_name': user.first_name,
-                            'last_name': user.last_name,
-                        }
-                    )
+                    try:
+                        author_obj, _ = Author.objects.get_or_create(
+                            user=user,
+                            defaults={
+                                'first_name': user.first_name,
+                                'last_name': user.last_name,
+                            }
+                        )
+                    except Author.MultipleObjectsReturned:
+                        author_obj = Author.objects.filter(
+                            user=user
+                        ).first()
                     author_objects.append(author_obj)
 
         return author_objects
@@ -534,12 +543,13 @@ class EditSourceReferenceView(UserPassesTestMixin, UpdateView):
         SourceReferenceAuthor.objects.filter(
             source_reference=self.object
         ).delete()
-        for order, author in enumerate(author_objects):
-            SourceReferenceAuthor.objects.create(
-                source_reference=self.object,
-                author=author,
-                order=order,
-            )
+        if author_objects:
+            for order, author in enumerate(author_objects):
+                SourceReferenceAuthor.objects.create(
+                    source_reference=self.object,
+                    author=author,
+                    order=order,
+                )
 
     def update_database_reference(self, post_dict):
         title = post_dict.get('title', '')
@@ -548,8 +558,7 @@ class EditSourceReferenceView(UserPassesTestMixin, UpdateView):
         self.object.source.name = title
         self.object.source.save()
         author_objects = self._collect_authors_from_post(post_dict)
-        if author_objects is not None:
-            self.set_ordered_authors(author_objects)
+        self.set_ordered_authors(author_objects)
         source_date = post_dict.get('source_date', '').strip() or None
         if source_date is not None:
             self.object.source_date = source_date or None
@@ -559,8 +568,7 @@ class EditSourceReferenceView(UserPassesTestMixin, UpdateView):
         source_name = post_dict.get('source_name', '')
         self.object.note = title
         author_objects = self._collect_authors_from_post(post_dict)
-        if author_objects is not None:
-            self.set_ordered_authors(author_objects)
+        self.set_ordered_authors(author_objects)
         source_date = post_dict.get('source_date', '').strip() or None
         if source_date is not None:
             self.object.source_date = source_date or None
