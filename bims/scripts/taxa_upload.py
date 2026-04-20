@@ -1375,7 +1375,6 @@ class TaxaProcessor(object):
                 if accepted_key and not accepted_taxon:
                     accepted_taxon = fetch_all_species_from_gbif(
                         gbif_key=accepted_key,
-                        taxonomic_rank=taxonomy.rank,
                         fetch_children=False,
                         is_synonym=False,
                         fetch_vernacular_names=False,
