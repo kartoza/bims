@@ -1348,8 +1348,15 @@ class TaxaProcessor(object):
             if taxonomic_status:
                 self._update_taxon_and_proposal(taxonomy, proposal, use_proposal, new_taxon, 'taxonomic_status', taxonomic_status.strip().upper())
 
-            if (is_synonym or is_doubtful) and not accepted_taxon and taxonomy.gbif_data:
-                accepted_key = taxonomy.gbif_data.get('acceptedKey', '')
+            # Refresh gbif_data for existing taxa, cached data may be outdated.
+            if not new_taxon and taxonomy.gbif_key:
+                fresh_data = get_species(taxonomy.gbif_key)
+                if fresh_data:
+                    taxonomy.gbif_data = fresh_data
+                    taxonomy.save(update_fields=['gbif_data'])
+
+            if (is_synonym or is_doubtful) and not accepted_taxon:
+                accepted_key = (taxonomy.gbif_data or {}).get('acceptedKey', '')
                 if accepted_key:
                     accepted_taxon = Taxonomy.objects.filter(gbif_key=accepted_key).first()
                 if accepted_key and not accepted_taxon:
