@@ -572,16 +572,17 @@ class EditSourceReferenceView(UserPassesTestMixin, UpdateView):
         ).delete()
         seen_ids = set()
         order = 0
-        for author in author_objects:
-            if author.id in seen_ids:
-                continue
-            seen_ids.add(author.id)
-            SourceReferenceAuthor.objects.create(
-                source_reference=self.object,
-                author=author,
-                order=order,
-            )
-            order += 1
+        if author_objects:
+            for author in author_objects:
+                if author.id in seen_ids:
+                    continue
+                seen_ids.add(author.id)
+                SourceReferenceAuthor.objects.create(
+                    source_reference=self.object,
+                    author=author,
+                    order=order,
+                )
+                order += 1
 
     def update_database_reference(self, post_dict):
         title = post_dict.get('title', '')
