@@ -311,11 +311,19 @@ class EditSourceReferenceView(UserPassesTestMixin, UpdateView):
                 )
                 author_obj = None
                 try:
-                    author_obj, _ = Author.objects.get_or_create(
+                    author_obj = Author.objects.get(
                         user=user,
+                        first_name=user.first_name,
+                        last_name=user.last_name
+                    )
+                except Author.DoesNotExist:
+                    first_initial = user.first_name[0] if user.first_name else ''
+                    author_obj, _ = Author.objects.get_or_create(
+                        first_name=user.first_name,
+                        last_name=user.last_name,
                         defaults={
-                            'first_name': user.first_name,
-                            'last_name': user.last_name,
+                            'user': user,
+                            'first_initial': first_initial
                         }
                     )
                 except Author.MultipleObjectsReturned:
@@ -329,18 +337,37 @@ class EditSourceReferenceView(UserPassesTestMixin, UpdateView):
                 user = self.get_user_from_string(raw)
                 if user:
                     try:
-                        author_obj, _ = Author.objects.get_or_create(
+                        author_obj = Author.objects.get(
                             user=user,
+                            first_name=user.first_name,
+                            last_name=user.last_name
+                        )
+                    except Author.DoesNotExist:
+                        first_initial = user.first_name[0] if user.first_name else ''
+                        author_obj, _ = Author.objects.get_or_create(
+                            first_name=user.first_name,
+                            last_name=user.last_name,
                             defaults={
-                                'first_name': user.first_name,
-                                'last_name': user.last_name,
+                                'user': user,
+                                'first_initial': first_initial
                             }
                         )
                     except Author.MultipleObjectsReturned:
                         author_obj = Author.objects.filter(
                             user=user
                         ).first()
-                    author_objects.append(author_obj)
+                else:
+                    # No matching user — create/get Author by name only
+                    parts = raw.split(' ', 1)
+                    first_name = parts[0]
+                    last_name = parts[1] if len(parts) > 1 else ''
+                    first_initial = first_name[0] if first_name else ''
+                    author_obj, _ = Author.objects.get_or_create(
+                        first_name=first_name,
+                        last_name=last_name,
+                        defaults={'first_initial': first_initial}
+                    )
+                author_objects.append(author_obj)
 
         return author_objects
 
@@ -543,13 +570,18 @@ class EditSourceReferenceView(UserPassesTestMixin, UpdateView):
         SourceReferenceAuthor.objects.filter(
             source_reference=self.object
         ).delete()
-        if author_objects:
-            for order, author in enumerate(author_objects):
-                SourceReferenceAuthor.objects.create(
-                    source_reference=self.object,
-                    author=author,
-                    order=order,
-                )
+        seen_ids = set()
+        order = 0
+        for author in author_objects:
+            if author.id in seen_ids:
+                continue
+            seen_ids.add(author.id)
+            SourceReferenceAuthor.objects.create(
+                source_reference=self.object,
+                author=author,
+                order=order,
+            )
+            order += 1
 
     def update_database_reference(self, post_dict):
         title = post_dict.get('title', '')

@@ -167,8 +167,13 @@ def user_autocomplete(request):
             search_qs = user_model.objects.filter(
                 Q(first_name__istartswith=first_name) |
                 Q(last_name__istartswith=last_name))
+        seen = set()
         results = []
         for r in search_qs:
+            name_key = (r.first_name.strip().lower(), r.last_name.strip().lower())
+            if name_key in seen:
+                continue
+            seen.add(name_key)
             results.append({
                 'id': r.id,
                 'first_name': r.first_name,

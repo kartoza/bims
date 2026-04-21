@@ -63,20 +63,30 @@
                         <label class="col-sm-2 col-form-label">Author(s)</label>
                         <div class="col-sm-10">
                             <div class="author-group" id="sortable">
-                            {% for author_name in object.author_names_list %}
+                            {% for sra in object.author_list %}
                                 <div class="ui-state-default row">
                                     <span class="ui-icon ui-icon-arrowthick-2-n-s" style="margin-top: 10px;"></span>
                                     <div class="col-10" style="padding-left: 10px">
-                                        <input
-                                               data-index="{{ forloop.counter0 }}"
-                                               name="author_{{ forloop.counter0 }}"
-                                               onClick="this.setSelectionRange(0, this.value.length)"
-                                               class="form-control authors"
-                                               value="{{ author_name }}"
-                                               placeholder="Author's name: [First name] [Space] [Last name]">
+                                        {% if sra.author.user %}
+                                            <input
+                                                   data-index="{{ forloop.counter0 }}"
+                                                   onClick="this.setSelectionRange(0, this.value.length)"
+                                                   class="form-control authors"
+                                                   value="{{ sra.author.user.first_name }} {{ sra.author.user.last_name }}"
+                                                   placeholder="Search for a user">
+                                            <input name="author_id_{{ forloop.counter0 }}" class="author-id" type="hidden" value="{{ sra.author.user.id }}">
+                                        {% else %}
+                                            <input
+                                                   data-index="{{ forloop.counter0 }}"
+                                                   name="author_{{ forloop.counter0 }}"
+                                                   onClick="this.setSelectionRange(0, this.value.length)"
+                                                   class="form-control authors"
+                                                   value="{{ sra.author.first_name }} {{ sra.author.last_name }}"
+                                                   placeholder="Search for a user">
+                                        {% endif %}
                                     </div>
                                     <div class="col-1">
-                                        <button class="btn btn-danger deleteAuthor">Delete</button>
+                                        <button type="button" class="btn btn-danger deleteAuthor">Delete</button>
                                     </div>
                                 </div>
                             {% empty %}
@@ -92,12 +102,12 @@
                                                placeholder="Author's name: [First name] [Space] [Last name]">
                                     </div>
                                     <div class="col-1">
-                                        <button class="btn btn-danger deleteAuthor">Delete</button>
+                                        <button type="button" class="btn btn-danger deleteAuthor">Delete</button>
                                     </div>
                                 </div>
                             {% endfor %}
                             </div>
-                            <button class="btn btn-default" id="addAuthor">Add new author</button>
+                            <button type="button" class="btn btn-default" id="addAuthor">Add new author</button>
                         </div>
                     </div>
                     <div class="form-group row">
@@ -245,12 +255,12 @@
                                     <input name="author_id_{{ forloop.counter0 }}" class="author-id" type="hidden" value="{{ author.id }}">
                                 </div>
                                 <div class="col-1">
-                                    <button class="btn btn-danger deleteAuthor">Delete</button>
+                                    <button type="button" class="btn btn-danger deleteAuthor">Delete</button>
                                 </div>
                             </div>
                         {% endfor %}
                         </div>
-                        <button class="btn btn-default" id="addAuthor">Add new author</button>
+                        <button type="button" class="btn btn-default" id="addAuthor">Add new author</button>
                     </div>
                 </div>
                 {% endif %}
@@ -315,32 +325,8 @@
             });
             $("#sortable").disableSelection();
         });
-        $(".authors").on("input", function(e) {
-            const $input = $(e.target);
-            const index = $input.data('index');
-            $input.parent().find(`[name ="author_id_${index}"]`).remove()
-        });
-        $addAuthorBtn.click(function (e) {
-            e.preventDefault();
-            let input = $('.author-template');
-            let authors = $('.author-group').find('.authors');
-            let newInput = input.clone(true);
-            newInput.show();
-            newInput.find('input').removeClass('ui-autocomplete-input');
-            newInput.removeClass('author-template');
-            newInput.find('input').attr('name', 'author_' + ( authors.length ));
-            newInput.find('input').attr('data-index', ( authors.length ));
-            newInput.val('');
-            $('.author-group').append(newInput);
-            newInput.find('input').focus();
-        });
-        $deleteAuthorBtn.click(function (e) {
-            e.preventDefault();
-            let target = $(e.target);
-            target.parent().parent().remove();
-        });
-        $(document).on("focus", ".authors", function() {
-            $(this).autocomplete({
+        function applyAuthorAutocomplete($input) {
+            $input.autocomplete({
                 source: function (request, response) {
                     $.ajax({
                         url: '/user-autocomplete/?term=' + encodeURIComponent(request.term),
@@ -363,19 +349,57 @@
                     }, 0);
                 },
                 change: function (event, ui) {
+                    const $inp = $(event.target);
+                    const index = $inp.data('index');
+                    const $hiddenId = $inp.parent().find(`[name="author_id_${index}"]`);
+                    if (ui.item) {
+                        $hiddenId.val(ui.item.value);
+                    } else {
+                        // Keep typed text as a name-only author; clear any stale user id
+                        $hiddenId.val('');
+                        if (!$inp.attr('name')) {
+                            $inp.attr('name', `author_${index}`);
+                        }
+                    }
                 },
                 select: function (e, u) {
                     e.preventDefault();
-                    const $input = $(e.target);
-                    const index = $input.data('index');
-                    $input.parent().find(`[name ="author_id_${index}"]`).remove()
-                    $input.after(
-                        `<input name="author_id_${index}" type="hidden" class="author-id" value="${u.item.value}">`
-                    )
-                    $input.removeAttr('name');
-                    $input.val(u.item.label);
+                    const $inp = $(e.target);
+                    const index = $inp.data('index');
+                    $inp.val(u.item.label);
+                    let $hiddenId = $inp.parent().find(`[name="author_id_${index}"]`);
+                    if ($hiddenId.length === 0) {
+                        $inp.after(`<input name="author_id_${index}" type="hidden" class="author-id" value="">`);
+                        $hiddenId = $inp.parent().find(`[name="author_id_${index}"]`);
+                        $inp.removeAttr('name');
+                    }
+                    $hiddenId.val(u.item.value);
                 }
-            })
+            });
+        }
+
+        $('.author-group .authors').each(function () {
+            applyAuthorAutocomplete($(this));
+        });
+
+        $addAuthorBtn.click(function (e) {
+            e.preventDefault();
+            let $template = $('.author-template');
+            let authors = $('.author-group').find('.authors');
+            let newInput = $template.clone();
+            newInput.show();
+            newInput.removeClass('author-template');
+            newInput.find('input').attr('name', 'author_' + authors.length);
+            newInput.find('input').attr('data-index', authors.length);
+            newInput.find('input').val('');
+            $('.author-group').append(newInput);
+            const $newAuthorInput = newInput.find('input');
+            applyAuthorAutocomplete($newAuthorInput);
+            $newAuthorInput.focus();
+        });
+        $(document).on('click', '.deleteAuthor', function (e) {
+            e.preventDefault();
+            $(e.target).closest('.ui-state-default').remove();
         });
 
     </script>

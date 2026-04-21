@@ -179,18 +179,20 @@ class SourceReference(PolymorphicModel):
 
     @property
     def author_names_list(self):
-        """Return list of author display name strings for template iteration."""
-        return [
+        """Return authors formatted as 'A, B & C' or 'A & B' or 'A'."""
+        names = [
             a.author.get_formatted_name() for a in
             SourceReferenceAuthor.objects.filter(source_reference_id=self.id).order_by('order')]
+        if not names:
+            return ''
+        if len(names) == 1:
+            return names[0]
+        return '{} & {}'.format(', '.join(names[:-1]), names[-1])
 
     @property
     def authors(self):
         """Return authors as a formatted string"""
-        names = self.author_names_list
-        if names:
-            return '; '.join(names)
-        return '-'
+        return self.author_names_list or '-'
 
     @property
     def title(self):
