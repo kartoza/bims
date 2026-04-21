@@ -855,6 +855,90 @@ class AddSourceReferenceView(LoginRequiredMixin, CreateView):
 
         return True
 
+    def _save_unpublished_authors(self, source_reference, post_data):
+        """Save authors to an unpublished source reference from author_ids and author_names."""
+        author_ids = post_data.get('author_ids', '').strip()
+        author_names = post_data.get('author_names', '').strip()
+
+        if not author_ids and not author_names:
+            return
+
+        author_objects = []
+
+        if author_ids:
+            for user_id in author_ids.split(','):
+                user_id = user_id.strip()
+                if not user_id:
+                    continue
+                try:
+                    user = get_user_model().objects.get(id=user_id)
+                    try:
+                        author = Author.objects.get(
+                            user=user,
+                            first_name=user.first_name,
+                            last_name=user.last_name
+                        )
+                    except Author.DoesNotExist:
+                        first_initial = user.first_name[0] if user.first_name else ''
+                        author, _ = Author.objects.get_or_create(
+                            first_name=user.first_name,
+                            last_name=user.last_name,
+                            defaults={'user': user, 'first_initial': first_initial}
+                        )
+                    except Author.MultipleObjectsReturned:
+                        author = Author.objects.filter(user=user).first()
+                    if author:
+                        author_objects.append(author)
+                except get_user_model().DoesNotExist:
+                    continue
+
+        if author_names:
+            for name in author_names.split(','):
+                name = name.strip()
+                if not name:
+                    continue
+                user = self.get_user_from_string(name)
+                if user:
+                    try:
+                        author = Author.objects.get(
+                            user=user,
+                            first_name=user.first_name,
+                            last_name=user.last_name
+                        )
+                    except Author.DoesNotExist:
+                        first_initial = user.first_name[0] if user.first_name else ''
+                        author, _ = Author.objects.get_or_create(
+                            first_name=user.first_name,
+                            last_name=user.last_name,
+                            defaults={'user': user, 'first_initial': first_initial}
+                        )
+                    except Author.MultipleObjectsReturned:
+                        author = Author.objects.filter(user=user).first()
+                else:
+                    parts = name.split(' ', 1)
+                    first_name = parts[0]
+                    last_name = parts[1] if len(parts) > 1 else ''
+                    first_initial = first_name[0] if first_name else ''
+                    author, _ = Author.objects.get_or_create(
+                        first_name=first_name,
+                        last_name=last_name,
+                        defaults={'first_initial': first_initial}
+                    )
+                if author:
+                    author_objects.append(author)
+
+        SourceReferenceAuthor.objects.filter(source_reference=source_reference).delete()
+        seen_ids = set()
+        for order, author in enumerate(author_objects):
+            if author.id in seen_ids:
+                continue
+            seen_ids.add(author.id)
+            SourceReferenceAuthor.objects.create(
+                source_reference=source_reference,
+                author=author,
+                order=order,
+            )
+
     def get_context_data(self, **kwargs):
         context = super(
             AddSourceReferenceView, self).get_context_data(**kwargs)
@@ -904,6 +988,7 @@ class AddSourceReferenceView(LoginRequiredMixin, CreateView):
                     source_name=post_dict.get('source', '')
                 )
                 self.object = source_reference
+                self._save_unpublished_authors(source_reference, post_dict)
                 processed = True
 
         if not processed:

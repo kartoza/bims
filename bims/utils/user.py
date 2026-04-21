@@ -1,4 +1,5 @@
-from django.db.models.fields.related import ForeignObjectRel
+from django.db import IntegrityError
+from django.db.models.fields.reverse_related import ForeignObjectRel, ManyToManyRel, OneToOneRel
 from django.contrib.auth import get_user_model
 from django.utils.text import slugify
 from django.db.models import Q
@@ -120,41 +121,74 @@ def create_users_from_string(user_string):
 
 def merge_users(primary_user, user_list):
     """
-    Merge multiple users into one primary_user
+    Merge multiple users into one primary_user.
+    Handles both FK and M2M reverse relations.
+    Users that fail to merge are skipped from deletion.
     """
-    if not primary_user and not user_list:
+    if not primary_user or not user_list:
         return
-
-    print('Merging %s data' % len(user_list))
 
     User = get_user_model()
     users = User.objects.filter(
         id__in=user_list
     ).exclude(id=primary_user.id)
 
-    links = [
-        rel.get_accessor_name() for rel in primary_user._meta.get_fields() if
-        issubclass(type(rel), ForeignObjectRel)
+    print('Merging %s users into %s' % (users.count(), str(primary_user)))
+
+    relations = [
+        rel for rel in primary_user._meta.get_fields()
+        if issubclass(type(rel), ForeignObjectRel)
+        and not isinstance(rel, OneToOneRel)
     ]
 
-    if links:
-        for user in users:
-            print('----- {} -----'.format(str(user)))
-            for link in links:
-                try:
-                    objects = getattr(user, link).all()
-                    if objects.count() > 0:
-                        print('Updating {obj} for : {taxon}'.format(
-                            obj=str(objects.model._meta.label),
-                            taxon=str(user)
-                        ))
-                        update_dict = {
-                            getattr(user, link).field.name: primary_user
-                        }
-                        objects.update(**update_dict)
-                except Exception as e:  # noqa
-                    print(e)
-                    continue
-            print(''.join(['-' for i in range(len(str(user)) + 12)]))
+    failed_user_ids = set()
 
-    users.delete()
+    for user in users:
+        header = '----- {} -----'.format(str(user))
+        print(header)
+        for rel in relations:
+            link = rel.get_accessor_name()
+            try:
+                if isinstance(rel, ManyToManyRel):
+                    if not rel.through._meta.auto_created:
+                        continue
+                    related_objects = getattr(user, link).all()
+                    if related_objects.exists():
+                        print('Merging M2M {obj} from: {user}'.format(
+                            obj=str(related_objects.model._meta.label),
+                            user=str(user)
+                        ))
+                        getattr(primary_user, link).add(*related_objects)
+                else:
+                    manager = getattr(user, link)
+                    objects = manager.all()
+                    if not objects.exists():
+                        continue
+                    print('Updating {obj} for: {user}'.format(
+                        obj=str(objects.model._meta.label),
+                        user=str(user)
+                    ))
+                    field_name = manager.field.name
+                    try:
+                        objects.update(**{field_name: primary_user})
+                    except IntegrityError:
+                        # Bulk update failed due to a unique constraint;
+                        # re-assign row-by-row and delete any that conflict.
+                        for obj in list(objects):
+                            try:
+                                type(obj).objects.filter(pk=obj.pk).update(
+                                    **{field_name: primary_user}
+                                )
+                            except IntegrityError:
+                                obj.delete()
+            except Exception as e:  # noqa
+                print('Failed to merge {link}: {e}'.format(link=link, e=e))
+                failed_user_ids.add(user.id)
+                continue
+        print('-' * len(header))
+
+    if failed_user_ids:
+        print('Skipping deletion of %s user(s) due to errors: %s' % (
+            len(failed_user_ids), failed_user_ids
+        ))
+    users.exclude(id__in=failed_user_ids).delete()
