@@ -124,7 +124,8 @@ class AddSourceReferenceView extends React.Component {
       case 'source':
         return this.state.selected_reference_type === PUBLISHED_REPORT ||
             this.state.selected_reference_type === UNPUBLISHED ||
-            this.state.selected_reference_type === PEER_REVIEWED
+            this.state.selected_reference_type === PEER_REVIEWED ||
+            this.state.selected_reference_type === DATABASE
       case 'date':
         return this.state.selected_reference_type === DATABASE ||
             this.state.selected_reference_type === UNPUBLISHED
@@ -211,11 +212,12 @@ class AddSourceReferenceView extends React.Component {
         </div> : null }
 
         {this.field('source') ?
-        <div className="form-group required-input">
-          <label>Source</label>
+        <div className={`form-group${this.state.selected_reference_type !== DATABASE ? ' required-input' : ''}`}>
+          <label>{ this.state.selected_reference_type === DATABASE ? 'Source name' : 'Source' }</label>
           <input type="text" className="form-control"
                  name="source" id="source" aria-describedby="sourceHelp"
-                 placeholder="Enter Source" value={this.state.source}  onChange={(e) => this.handleInputChange('source', e)}/>
+                 placeholder={ this.state.selected_reference_type === DATABASE ? 'Enter Source name' : 'Enter Source' }
+                 value={this.state.source}  onChange={(e) => this.handleInputChange('source', e)}/>
         </div> : null }
 
         {this.field('description') ?

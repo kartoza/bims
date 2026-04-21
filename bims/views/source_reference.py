@@ -240,7 +240,12 @@ class DeleteSourceReferenceView(UserPassesTestMixin, View):
             )
 
         source_reference_name = source_reference.title
+        database_record = None
+        if isinstance(source_reference, SourceReferenceDatabase):
+            database_record = source_reference.source
         source_reference.delete()
+        if database_record:
+            database_record.delete()
 
         return JsonResponse(
             {'success': True, 'message': f'Source reference "{source_reference_name}" successfully deleted!'}
@@ -756,6 +761,15 @@ class AddSourceReferenceView(LoginRequiredMixin, CreateView):
                 )
             )
             self.object = source_reference
+            self._save_source_reference_authors(source_reference, post_data)
+            source_date = post_data.get('source_date', '').strip() or None
+            source_name = post_data.get('source', '').strip() or None
+            if source_date or source_name:
+                if source_date:
+                    source_reference.source_date = source_date
+                if source_name:
+                    source_reference.source_name = source_name
+                source_reference.save()
         return True
 
     def get_user_from_string(self, user_string):
@@ -856,7 +870,7 @@ class AddSourceReferenceView(LoginRequiredMixin, CreateView):
 
         return True
 
-    def _save_unpublished_authors(self, source_reference, post_data):
+    def _save_source_reference_authors(self, source_reference, post_data):
         """Save authors to an unpublished source reference from author_ids and author_names."""
         author_ids = post_data.get('author_ids', '').strip()
         author_names = post_data.get('author_names', '').strip()
@@ -989,7 +1003,11 @@ class AddSourceReferenceView(LoginRequiredMixin, CreateView):
                     source_name=post_dict.get('source', '')
                 )
                 self.object = source_reference
-                self._save_unpublished_authors(source_reference, post_dict)
+                self._save_source_reference_authors(source_reference, post_dict)
+                source_date = post_dict.get('source_date', '').strip() or None
+                if source_date:
+                    source_reference.source_date = source_date
+                    source_reference.save()
                 processed = True
 
         if not processed:
