@@ -132,6 +132,126 @@ class GbifPublishModelSignalTests(FastTenantTestCase):
             self.assertEqual(task.crontab.day_of_month, "*")
             self.assertEqual(task.crontab.day_of_week, "*")
 
+    def _make_schedule(self, source_reference=None, **kwargs):
+        config = _make_config()
+        defaults = dict(
+            gbif_config=config,
+            enabled=False,
+            period=PublishPeriod.DAILY,
+            run_at=timezone.datetime(2024, 1, 1, 2, 0).time(),
+            timezone="UTC",
+        )
+        defaults.update(kwargs)
+        if source_reference is None:
+            source_reference = SourceReferenceF.create()
+        return GbifPublish.objects.create(source_reference=source_reference, **defaults)
+
+    # ------------------------------------------------------------------
+    # seed_contacts_from_source_reference_authors
+    # ------------------------------------------------------------------
+
+    def test_authors_seeded_as_schedule_contacts_on_create(self):
+        """Authors of the source reference become schedule-level contacts."""
+        source_reference = SourceReferenceF.create()
+        user = UserF.create(first_name="Alice", last_name="Smith", email="alice@example.com")
+        author = Author.objects.create(first_name="Alice", last_name="Smith", user=user)
+        SourceReferenceAuthor.objects.create(
+            source_reference=source_reference, author=author, order=0
+        )
+
+        schedule = self._make_schedule(source_reference=source_reference)
+
+        contacts = list(
+            GbifPublishContact.objects.filter(gbif_publish=schedule).order_by("id")
+        )
+        self.assertEqual(len(contacts), 1)
+        c = contacts[0]
+        self.assertEqual(c.individual_name_given, "Alice")
+        self.assertEqual(c.individual_name_sur, "Smith")
+        self.assertEqual(c.user, user)
+        self.assertIsNone(c.gbif_config)
+
+    def test_multiple_authors_seeded_in_order(self):
+        """Multiple authors are seeded in order and all linked to the schedule."""
+        source_reference = SourceReferenceF.create()
+        authors_data = [
+            ("First", "Author"),
+            ("Second", "Writer"),
+            ("Third", "Person"),
+        ]
+        for i, (first, last) in enumerate(authors_data):
+            author = Author.objects.create(first_name=first, last_name=last)
+            SourceReferenceAuthor.objects.create(
+                source_reference=source_reference, author=author, order=i
+            )
+
+        schedule = self._make_schedule(source_reference=source_reference)
+
+        contacts = list(
+            GbifPublishContact.objects.filter(gbif_publish=schedule).order_by("id")
+        )
+        self.assertEqual(len(contacts), 3)
+        self.assertEqual(contacts[0].individual_name_given, "First")
+        self.assertEqual(contacts[1].individual_name_given, "Second")
+        self.assertEqual(contacts[2].individual_name_given, "Third")
+
+    def test_author_without_user_seeded_with_name_only(self):
+        """An Author with no linked user still produces a contact with name fields."""
+        source_reference = SourceReferenceF.create()
+        author = Author.objects.create(first_name="NoLink", last_name="Person")
+        # Author._set_user() auto-creates a user on save; bypass it via direct update.
+        Author.objects.filter(pk=author.pk).update(user=None)
+        author.refresh_from_db()
+        SourceReferenceAuthor.objects.create(
+            source_reference=source_reference, author=author, order=0
+        )
+
+        schedule = self._make_schedule(source_reference=source_reference)
+
+        contacts = list(GbifPublishContact.objects.filter(gbif_publish=schedule))
+        self.assertEqual(len(contacts), 1)
+        self.assertEqual(contacts[0].individual_name_given, "NoLink")
+        self.assertEqual(contacts[0].individual_name_sur, "Person")
+        self.assertIsNone(contacts[0].user)
+
+    def test_no_contacts_seeded_when_no_source_reference(self):
+        """Schedules without a source reference get no seeded contacts."""
+        config = _make_config()
+        schedule = GbifPublish.objects.create(
+            source_reference=None,
+            gbif_config=config,
+            enabled=False,
+            period=PublishPeriod.DAILY,
+            timezone="UTC",
+        )
+        self.assertFalse(GbifPublishContact.objects.filter(gbif_publish=schedule).exists())
+
+    def test_no_contacts_seeded_when_source_reference_has_no_authors(self):
+        """A source reference with no authors produces no schedule contacts."""
+        source_reference = SourceReferenceF.create()
+        schedule = self._make_schedule(source_reference=source_reference)
+        self.assertFalse(GbifPublishContact.objects.filter(gbif_publish=schedule).exists())
+
+    def test_contacts_not_reseeded_on_subsequent_save(self):
+        """Saving an existing schedule a second time must not duplicate contacts."""
+        source_reference = SourceReferenceF.create()
+        author = Author.objects.create(first_name="Once", last_name="Only")
+        SourceReferenceAuthor.objects.create(
+            source_reference=source_reference, author=author, order=0
+        )
+
+        schedule = self._make_schedule(source_reference=source_reference)
+        self.assertEqual(
+            GbifPublishContact.objects.filter(gbif_publish=schedule).count(), 1
+        )
+
+        # Save again — must not add a second copy
+        schedule.enabled = True
+        schedule.save()
+        self.assertEqual(
+            GbifPublishContact.objects.filter(gbif_publish=schedule).count(), 1
+        )
+
     def test_gbif_publish_post_delete_removes_task(self):
         source_reference = SourceReferenceF.create()
         config = _make_config()
