@@ -88,11 +88,26 @@ def run_scheduled_gbif_publish(self, schema_name: str, publish_id: int, trigger:
 
                 config = publish_schedule.gbif_config
                 source_reference = publish_schedule.source_reference
-                contacts = list(
+
+                select = ("user", "user__bims_profile", "user__bims_profile__role")
+                config_contacts = list(
                     GbifPublishContact.objects
                     .filter(gbif_config=config)
-                    .select_related("user", "user__bims_profile", "user__bims_profile__role")
+                    .select_related(*select)
                 )
+                schedule_contacts = list(
+                    GbifPublishContact.objects
+                    .filter(gbif_publish=publish_schedule)
+                    .select_related(*select)
+                )
+                # Merge: config contacts first, then schedule-specific additions.
+                # Deduplicate by pk so the same contact row is never included twice.
+                seen_pks = set()
+                contacts = []
+                for c in config_contacts + schedule_contacts:
+                    if c.pk not in seen_pks:
+                        seen_pks.add(c.pk)
+                        contacts.append(c)
 
                 if not contacts:
                     return {"status": "no_contacts", "publish_id": publish_id}

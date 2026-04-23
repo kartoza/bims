@@ -219,14 +219,27 @@ class RoleType(models.TextChoices):
 
 class GbifPublishContact(models.Model):
     """
-    Contact information embedded in the EML metadata for a GBIF config.
-    All schedules that use the same GbifPublishConfig will share these contacts.
+    Contact information embedded in the EML metadata.
+
+    A contact belongs to either a GbifPublishConfig (shared across all schedules
+    that use that config) or a specific GbifPublish schedule (overrides/additions
+    for that schedule only).  Exactly one of gbif_config / gbif_publish must be set.
     """
     gbif_config = models.ForeignKey(
         GbifPublishConfig,
         on_delete=models.CASCADE,
         related_name="contacts",
-        help_text="The GBIF config these contacts belong to."
+        null=True,
+        blank=True,
+        help_text="The GBIF config these contacts belong to (leave blank for schedule-level contacts)."
+    )
+    gbif_publish = models.ForeignKey(
+        GbifPublish,
+        on_delete=models.CASCADE,
+        related_name="contacts",
+        null=True,
+        blank=True,
+        help_text="The GBIF publish schedule these contacts belong to (leave blank for config-level contacts)."
     )
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -386,9 +399,15 @@ def fill_gbif_publish_contact_from_user(sender, instance: 'GbifPublishContact', 
             setattr(instance, field, value)
             update_fields.append(field)
 
+    # Look for another contact for the same user within the same owner
+    # (config-level or schedule-level) to copy already-resolved fields from.
+    if instance.gbif_publish_id:
+        sibling_filter = {"gbif_publish_id": instance.gbif_publish_id}
+    else:
+        sibling_filter = {"gbif_config_id": instance.gbif_config_id}
     sibling = (
         GbifPublishContact.objects
-        .filter(user_id=user.id, gbif_config=instance.gbif_config)
+        .filter(user_id=user.id, **sibling_filter)
         .exclude(id=instance.id)
         .first()
     )
@@ -487,4 +506,27 @@ def sync_gbif_publish_periodic_task(sender, instance: GbifPublish, **kwargs):
                 "args": json.dumps([schema, instance.id]),
                 "enabled": instance.enabled,
             },
+        )
+
+
+@receiver(post_save, sender=GbifPublish)
+def seed_contacts_from_source_reference_authors(sender, instance: GbifPublish, created: bool, **kwargs):
+    """On first creation, add each source reference author as a schedule-level contact."""
+    if not created or not instance.source_reference_id:
+        return
+
+    from bims.models.source_reference import SourceReferenceAuthor
+    sra_qs = (
+        SourceReferenceAuthor.objects
+        .filter(source_reference_id=instance.source_reference_id)
+        .select_related("author", "author__user")
+        .order_by("order")
+    )
+    for sra in sra_qs:
+        author = sra.author
+        GbifPublishContact.objects.create(
+            gbif_publish=instance,
+            user=author.user if author.user_id else None,
+            individual_name_given=author.first_name or "",
+            individual_name_sur=author.last_name or "",
         )

@@ -6,6 +6,7 @@ in the default Django admin site using proxy models.
 from django import forms
 from django.contrib import admin, messages
 from django.db import connection
+from django.db.models.signals import post_save, post_delete
 from django.utils.html import format_html
 from django.utils.timezone import localtime
 
@@ -15,6 +16,9 @@ from bims.models.gbif_publish import (
     GbifPublish,
     GbifPublishSession,
     GbifPublishContact,
+    sync_gbif_publish_periodic_task,
+    gbif_publish_post_delete,
+    seed_contacts_from_source_reference_authors,
 )
 from bims.forms.gbif_publish import GbifPublishAdminForm
 from bims.tasks import run_scheduled_gbif_publish
@@ -47,7 +51,10 @@ class GbifPublishConfigForm(forms.ModelForm):
         return instance
 
 
-# Proxy models with custom app_label for admin grouping
+# ---------------------------------------------------------------------------
+# Proxy models
+# ---------------------------------------------------------------------------
+
 class GbifPublishConfigProxy(GbifPublishConfig):
     class Meta:
         proxy = True
@@ -62,6 +69,25 @@ class GbifPublishProxy(GbifPublish):
         verbose_name_plural = 'GBIF Publish Schedules'
 
 
+# Connect signals to the proxy model so that admin saves (which use the proxy)
+# trigger the same periodic-task sync as direct GbifPublish saves.
+post_save.connect(
+    sync_gbif_publish_periodic_task,
+    sender=GbifPublishProxy,
+    dispatch_uid='sync_gbif_publish_proxy_post_save',
+)
+post_save.connect(
+    seed_contacts_from_source_reference_authors,
+    sender=GbifPublishProxy,
+    dispatch_uid='seed_contacts_from_source_reference_authors_proxy',
+)
+post_delete.connect(
+    gbif_publish_post_delete,
+    sender=GbifPublishProxy,
+    dispatch_uid='gbif_publish_proxy_post_delete',
+)
+
+
 class GbifPublishSessionProxy(GbifPublishSession):
     class Meta:
         proxy = True
@@ -69,16 +95,61 @@ class GbifPublishSessionProxy(GbifPublishSession):
         verbose_name_plural = 'GBIF Publish Sessions'
 
 
-class GbifPublishContactInline(admin.StackedInline):
-    classes = ('grp-collapse grp-open',)
-    inline_classes = ('grp-collapse grp-open',)
-    model = GbifPublishContact
+# ---------------------------------------------------------------------------
+# Inline classes (defined before the admin classes that reference them)
+# ---------------------------------------------------------------------------
 
+_CONTACT_FIELDS = (
+    "user",
+    "role",
+    "individual_name_given",
+    "individual_name_sur",
+    "organization_name",
+    "position_name",
+    "delivery_point",
+    "city",
+    "postal_code",
+    "country",
+    "phone",
+    "electronic_mail_address",
+    "online_url",
+)
+
+
+class GbifPublishConfigContactInline(admin.TabularInline):
+    """Contacts that belong to a GbifPublishConfig (shared across all schedules using that config)."""
+    model = GbifPublishContact
+    extra = 1
+    autocomplete_fields = ("user",)
+    fields = _CONTACT_FIELDS
+    verbose_name = "Contact"
+    verbose_name_plural = "Contacts"
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).filter(gbif_publish__isnull=True)
+
+
+class GbifPublishScheduleContactInline(admin.TabularInline):
+    """Extra contacts specific to one GbifPublish schedule (merged with config contacts on publish)."""
+    model = GbifPublishContact
+    extra = 1
+    autocomplete_fields = ("user",)
+    fields = _CONTACT_FIELDS
+    verbose_name = "Schedule-specific Contact"
+    verbose_name_plural = "Schedule-specific Contacts"
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).filter(gbif_config__isnull=True)
+
+
+# ---------------------------------------------------------------------------
+# Admin classes
+# ---------------------------------------------------------------------------
 
 @admin.register(GbifPublishConfigProxy)
 class GbifPublishConfigAdmin(admin.ModelAdmin):
     form = GbifPublishConfigForm
-    inlines = [GbifPublishContactInline]
+    inlines = [GbifPublishConfigContactInline]
     list_display = (
         "name",
         "gbif_api_url",
@@ -116,46 +187,19 @@ class GbifPublishConfigAdmin(admin.ModelAdmin):
     def create_new_installation(self, request, queryset):
         from bims.utils.gbif_publish import create_new_installation
         obj = queryset.first()
-        installation_key = create_new_installation(
-            obj
-        )
+        installation_key = create_new_installation(obj)
         if installation_key:
             obj.installation_key = installation_key
             obj.save()
-            self.message_user(
-                request,
-                f"Installation key created", messages.SUCCESS)
+            self.message_user(request, "Installation key created", messages.SUCCESS)
         else:
-            self.message_user(
-                request,
-                f"Failed to create installation key", messages.ERROR)
-
-
-class GbifPublishContactInline(admin.TabularInline):
-    model = GbifPublishContact
-    extra = 1
-    autocomplete_fields = ("user",)
-    fields = (
-        "user",
-        "individual_name_given",
-        "individual_name_sur",
-        "organization_name",
-        "position_name",
-        "delivery_point",
-        "city",
-        "postal_code",
-        "country",
-        "phone",
-        "electronic_mail_address",
-        "online_url",
-    )
-    verbose_name = "Contact"
-    verbose_name_plural = "Contacts"
+            self.message_user(request, "Failed to create installation key", messages.ERROR)
 
 
 @admin.register(GbifPublishProxy)
 class GbifPublishAdmin(admin.ModelAdmin):
     form = GbifPublishAdminForm
+    inlines = [GbifPublishScheduleContactInline]
 
     list_display = (
         "source_reference",
@@ -229,20 +273,25 @@ class GbifPublishAdmin(admin.ModelAdmin):
             schema_name = str(connection.schema_name)
             run_scheduled_gbif_publish.delay(schema_name, publish.id)
             count += 1
-        self.message_user(
-            request, f"Queued {count} publish job(s).", messages.SUCCESS)
+        self.message_user(request, f"Queued {count} publish job(s).", messages.SUCCESS)
 
     @admin.action(description="Enable schedule")
     def action_enable(self, request, queryset):
-        updated = queryset.update(enabled=True)
-        self.message_user(
-            request, f"Enabled {updated} schedule(s).", messages.SUCCESS)
+        count = 0
+        for obj in queryset:
+            obj.enabled = True
+            obj.save(update_fields=["enabled"])
+            count += 1
+        self.message_user(request, f"Enabled {count} schedule(s).", messages.SUCCESS)
 
     @admin.action(description="Disable schedule")
     def action_disable(self, request, queryset):
-        updated = queryset.update(enabled=False)
-        self.message_user(
-            request, f"Disabled {updated} schedule(s).", messages.SUCCESS)
+        count = 0
+        for obj in queryset:
+            obj.enabled = False
+            obj.save(update_fields=["enabled"])
+            count += 1
+        self.message_user(request, f"Disabled {count} schedule(s).", messages.SUCCESS)
 
 
 @admin.register(GbifPublishSessionProxy)
