@@ -11,8 +11,10 @@ from rest_framework import status
 from rest_framework.test import APIClient
 
 from bims.models import BiologicalCollectionRecord
+from bims.models.bims_document import BimsDocument, BimsDocumentAuthorship
 from bims.models.source_reference import (
     SourceReference,
+    SourceReferenceAuthor,
     merge_source_references, SourceReferenceDatabase,
     SourceReferenceDocument, source_reference_post_save_handler,
     SourceReferenceBibliography
@@ -26,11 +28,15 @@ from bims.tests.model_factories import (
     BiologicalCollectionRecordF, UserF,
     ChemicalRecordF,
     LocationSite,
+    DocumentF,
 )
 from bims.models.location_site import location_site_post_save_handler
+from bims.factories import AuthorFactory
 from geonode.documents.models import Document
 from bims.models.chemical_record import ChemicalRecord
+from td_biblio.models.bibliography import AuthorEntryRank
 from td_biblio.tests.model_factories import (
+    AuthorF,
     JournalF,
     EntryF
 )
@@ -324,4 +330,145 @@ class TestRemoveRecordsBySourceReference(FastTenantTestCase):
         invalid_url = reverse('delete-records-by-source-reference-id', kwargs={'source_reference_id': 0})
         response = self.client.post(invalid_url)
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+
+class TestSourceReferenceListCollectorsFilter(FastTenantTestCase):
+    """Tests for the collectors filter on the source reference list view."""
+
+    def setUp(self):
+        from bims.models.source_reference import disconnect_source_reference_signals
+        disconnect_source_reference_signals()
+        self.client = TenantClient(self.tenant)
+        self.user = UserF.create(password='password')
+        self.other_user = UserF.create(password='password')
+        self.url = '/source-references/'
+
+    def tearDown(self):
+        from bims.models.source_reference import reconnect_source_reference_signals
+        reconnect_source_reference_signals()
+
+    def _get_ids(self, response):
+        return {obj.id for obj in response.context['object_list']}
+
+    def _make_author_for_user(self, user):
+        """Create an Author linked to user, bypassing _set_user() override."""
+        from td_biblio.models.bibliography import Author
+        author = AuthorF.create()
+        # _set_user() in save() overrides the user field based on name lookup,
+        # so use update() to bypass save() and force the correct user.
+        Author.objects.filter(pk=author.pk).update(user=user)
+        author.refresh_from_db()
+        return author
+
+    def test_collectors_filter_bibliography(self):
+        """Bibliography reference whose Entry author matches user is returned."""
+        author = self._make_author_for_user(self.user)
+        entry = EntryF.create()
+        AuthorEntryRank.objects.create(author=author, entry=entry, rank=0)
+        ref = SourceReferenceBibliographyF.create(source=entry)
+
+        # Unrelated bibliography (no matching author)
+        SourceReferenceBibliographyF.create()
+
+        response = self.client.get(self.url, {'collectors': self.user.id})
+        self.assertEqual(response.status_code, 200)
+        ids = self._get_ids(response)
+        self.assertIn(ref.id, ids)
+
+    def test_collectors_filter_document(self):
+        """Document reference whose BimsDocument author matches user is returned."""
+        # Give document a non-null owner so BimsDocument.save() doesn't fail
+        document = DocumentF.create(owner=self.user)
+        bims_doc = BimsDocument.objects.create(document=document)
+        # BimsDocument.save() auto-adds document.owner (self.user) as author
+        ref = SourceReferenceDocumentF.create(source=document)
+
+        # Unrelated document reference
+        other_doc = DocumentF.create(owner=self.other_user)
+        BimsDocument.objects.create(document=other_doc)
+        SourceReferenceDocumentF.create(source=other_doc)
+
+        response = self.client.get(self.url, {'collectors': self.user.id})
+        self.assertEqual(response.status_code, 200)
+        ids = self._get_ids(response)
+        self.assertIn(ref.id, ids)
+
+    def test_collectors_filter_unpublished(self):
+        """Unpublished reference with a SourceReferenceAuthor matching user is returned."""
+        author = self._make_author_for_user(self.user)
+        ref = SourceReferenceF.create(note='unpublished ref')
+        SourceReferenceAuthor.objects.create(
+            source_reference=ref, author=author, order=0
+        )
+
+        # Unrelated unpublished reference (no author)
+        SourceReferenceF.create(note='other ref')
+
+        response = self.client.get(self.url, {'collectors': self.user.id})
+        self.assertEqual(response.status_code, 200)
+        ids = self._get_ids(response)
+        self.assertIn(ref.id, ids)
+
+    def test_collectors_filter_database(self):
+        """Database reference with a SourceReferenceAuthor matching user is returned."""
+        author = self._make_author_for_user(self.user)
+        ref = SourceReferenceDatabaseF.create()
+        SourceReferenceAuthor.objects.create(
+            source_reference=ref, author=author, order=0
+        )
+
+        # Unrelated database reference (no author)
+        SourceReferenceDatabaseF.create()
+
+        response = self.client.get(self.url, {'collectors': self.user.id})
+        self.assertEqual(response.status_code, 200)
+        ids = self._get_ids(response)
+        self.assertIn(ref.id, ids)
+
+    def test_collectors_filter_excludes_other_users(self):
+        """References authored only by other_user are not returned for user."""
+        author = self._make_author_for_user(self.other_user)
+        ref = SourceReferenceF.create(note='other user ref')
+        SourceReferenceAuthor.objects.create(
+            source_reference=ref, author=author, order=0
+        )
+
+        response = self.client.get(self.url, {'collectors': self.user.id})
+        self.assertEqual(response.status_code, 200)
+        ids = self._get_ids(response)
+        self.assertNotIn(ref.id, ids)
+
+    def test_collectors_filter_multiple_users(self):
+        """Passing multiple user IDs returns references for any of them."""
+        author1 = self._make_author_for_user(self.user)
+        author2 = self._make_author_for_user(self.other_user)
+
+        ref1 = SourceReferenceF.create(note='ref user 1')
+        SourceReferenceAuthor.objects.create(
+            source_reference=ref1, author=author1, order=0
+        )
+        ref2 = SourceReferenceF.create(note='ref user 2')
+        SourceReferenceAuthor.objects.create(
+            source_reference=ref2, author=author2, order=0
+        )
+
+        response = self.client.get(
+            self.url,
+            {'collectors': f'{self.user.id},{self.other_user.id}'}
+        )
+        self.assertEqual(response.status_code, 200)
+        ids = self._get_ids(response)
+        self.assertIn(ref1.id, ids)
+        self.assertIn(ref2.id, ids)
+
+    def test_no_collectors_filter_returns_all(self):
+        """Without collectors param, all source references are returned."""
+        ref1 = SourceReferenceF.create(note='ref a')
+        ref2 = SourceReferenceDatabaseF.create()
+
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        ids = self._get_ids(response)
+        self.assertIn(ref1.id, ids)
+        self.assertIn(ref2.id, ids)
 
