@@ -209,3 +209,18 @@ class ClimateCSVUpload(DataCSVUpload):
             )
         self.upload_session.save()
         logger.info(f"Finished climate upload for session {self.upload_session.id}")
+
+        if not self.upload_session.canceled:
+            self._clear_climate_search_results()
+
+    def _clear_climate_search_results(self):
+        """Delete SearchProcess records whose query references climate data."""
+        from bims.models.search_process import SearchProcess
+        deleted_count, _ = SearchProcess.objects.filter(
+            search_raw_query__contains='climate_climate'
+        ).delete()
+        if deleted_count:
+            logger.info(
+                f"Cleared {deleted_count} climate-related search process record(s) "
+                f"after climate data upload (session {self.upload_session.id})"
+            )

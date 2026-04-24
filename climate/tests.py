@@ -1,6 +1,7 @@
 import json
 from datetime import date
 from decimal import Decimal
+from unittest.mock import MagicMock
 
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
@@ -10,6 +11,7 @@ from django.urls import reverse
 from django_tenants.test.cases import FastTenantTestCase
 from django_tenants.test.client import TenantClient
 
+from bims.models.search_process import SearchProcess, SEARCH_RESULTS
 from bims.models.upload_session import UploadSession
 from bims.tests.model_factories import (
     LocationSiteF,
@@ -17,6 +19,7 @@ from bims.tests.model_factories import (
     LocationContextGroupF,
 )
 from climate.models import Climate
+from climate.scripts.climate_upload import ClimateCSVUpload
 from climate.views import (
     _build_daily_records,
     _build_monthly_records,
@@ -759,3 +762,72 @@ class ClimateDashboardMultipleSitesSanparksTests(FastTenantTestCase):
     def test_template_shows_park_name_column(self):
         response = self.client.get(self.template_url)
         self.assertContains(response, 'Park Name')
+
+
+class ClimateUploadClearSearchProcessTests(FastTenantTestCase):
+    """Tests for _clear_climate_search_results in ClimateCSVUpload."""
+
+    def _make_uploader(self, canceled=False):
+        session = MagicMock()
+        session.id = 1
+        session.canceled = canceled
+        uploader = ClimateCSVUpload.__new__(ClimateCSVUpload)
+        uploader.upload_session = session
+        uploader.success_list = []
+        uploader.error_list = []
+        return uploader
+
+    def _make_search_process(self, raw_query, locked=False):
+        return SearchProcess.objects.create(
+            category=SEARCH_RESULTS,
+            process_id=f'test-{SearchProcess.objects.count()}',
+            search_raw_query=raw_query,
+            finished=True,
+            locked=locked,
+        )
+
+    def test_clears_climate_search_process_records(self):
+        """process_ended deletes unlocked SearchProcess records referencing climate_climate."""
+        sp = self._make_search_process(
+            'SELECT ... FROM "climate_climate" WHERE ...'
+        )
+        uploader = self._make_uploader()
+        uploader._clear_climate_search_results()
+        self.assertFalse(SearchProcess.objects.filter(pk=sp.pk).exists())
+
+    def test_does_not_delete_locked_records(self):
+        """Locked SearchProcess records are preserved even when they reference climate_climate."""
+        sp = self._make_search_process(
+            'SELECT ... FROM "climate_climate" WHERE ...',
+            locked=True,
+        )
+        uploader = self._make_uploader()
+        uploader._clear_climate_search_results()
+        self.assertTrue(SearchProcess.objects.filter(pk=sp.pk).exists())
+
+    def test_does_not_delete_unrelated_search_process(self):
+        """SearchProcess records without climate_climate in their query are left untouched."""
+        sp = self._make_search_process(
+            'SELECT ... FROM "bims_biologicalcollectionrecord" WHERE ...'
+        )
+        uploader = self._make_uploader()
+        uploader._clear_climate_search_results()
+        self.assertTrue(SearchProcess.objects.filter(pk=sp.pk).exists())
+
+    def test_process_ended_skips_clear_when_canceled(self):
+        """process_ended does not clear search results when the session was canceled."""
+        sp = self._make_search_process(
+            'SELECT ... FROM "climate_climate" WHERE ...'
+        )
+        uploader = self._make_uploader(canceled=True)
+        uploader.process_ended()
+        self.assertTrue(SearchProcess.objects.filter(pk=sp.pk).exists())
+
+    def test_process_ended_clears_on_success(self):
+        """process_ended clears climate search results when the upload succeeds."""
+        sp = self._make_search_process(
+            'SELECT ... FROM "climate_climate" WHERE ...'
+        )
+        uploader = self._make_uploader(canceled=False)
+        uploader.process_ended()
+        self.assertFalse(SearchProcess.objects.filter(pk=sp.pk).exists())
