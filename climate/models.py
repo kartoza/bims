@@ -86,6 +86,11 @@ class Climate(models.Model):
         validators=[MinValueValidator(0)],
         help_text='Daily rainfall (mm)'
     )
+    flag = models.TextField(
+        blank=True,
+        null=True,
+        default=''
+    )
     created_at = models.DateTimeField(
         auto_now_add=True,
         help_text='When this record was created'

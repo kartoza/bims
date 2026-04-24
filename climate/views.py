@@ -715,6 +715,7 @@ class ClimateSiteView(TemplateView):
                     'max_humidity': float(record.max_humidity) if record.max_humidity else None,
                     'avg_windspeed': float(record.avg_windspeed) if record.avg_windspeed else None,
                     'daily_rainfall': float(record.daily_rainfall) if record.daily_rainfall else None,
+                    'flag': record.flag
                 })
             context['daily_records_json'] = json.dumps(daily_records_list, cls=DjangoJSONEncoder)
 
