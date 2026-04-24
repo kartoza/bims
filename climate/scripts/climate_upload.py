@@ -111,6 +111,7 @@ class ClimateCSVUpload(DataCSVUpload):
         min_temp = self.get_float_value(row, 'Minimum daily temperature')
         max_humidity = self.get_float_value(row, 'Maximum relative humidity')
         min_humidity = self.get_float_value(row, 'Minimum relative humidity')
+        flag = self.row_value(row, 'Flag')
 
         # Create or update climate record
         try:
@@ -127,6 +128,7 @@ class ClimateCSVUpload(DataCSVUpload):
                     'min_temperature': min_temp,
                     'max_humidity': max_humidity,
                     'min_humidity': min_humidity,
+                    'flag': flag
                 }
             )
             self.success_file(row, climate.id)

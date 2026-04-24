@@ -13,13 +13,13 @@ class ClimateAdmin(admin.ModelAdmin):
         'avg_temperature',
         'daily_rainfall',
         'avg_humidity',
-        'avg_windspeed'
+        'avg_windspeed',
+        'flag'
     ]
 
     list_filter = [
         'year',
         'month',
-        'location_site',
         'station_name'
     ]
 
@@ -47,7 +47,7 @@ class ClimateAdmin(admin.ModelAdmin):
             'fields': ('avg_humidity', 'max_humidity', 'min_humidity')
         }),
         ('Other Measurements', {
-            'fields': ('avg_windspeed', 'daily_rainfall')
+            'fields': ('avg_windspeed', 'daily_rainfall', 'flag')
         }),
         ('Metadata', {
             'fields': ('created_at', 'updated_at'),

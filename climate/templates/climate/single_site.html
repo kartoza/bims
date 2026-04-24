@@ -411,7 +411,7 @@
                         if (!dailyRecords || !dailyRecords.length) return;
 
                         // Build CSV content
-                        const headers = ['Date', 'Avg Temp (°C)', 'Min Temp (°C)', 'Max Temp (°C)', 'Avg Humidity (%)', 'Min Humidity (%)', 'Max Humidity (%)', 'Avg Wind (m/s)', 'Daily Rainfall (mm)'];
+                        const headers = ['Date', 'Avg Temp (°C)', 'Min Temp (°C)', 'Max Temp (°C)', 'Avg Humidity (%)', 'Min Humidity (%)', 'Max Humidity (%)', 'Avg Wind (m/s)', 'Daily Rainfall (mm)', 'Flag'];
                         let csvContent = headers.join(',') + '\n';
 
                         dailyRecords.forEach(function(record) {
@@ -424,7 +424,8 @@
                                 record.min_humidity !== null ? record.min_humidity : '',
                                 record.max_humidity !== null ? record.max_humidity : '',
                                 record.avg_windspeed !== null ? record.avg_windspeed : '',
-                                record.daily_rainfall !== null ? record.daily_rainfall : ''
+                                record.daily_rainfall !== null ? record.daily_rainfall : '',
+                                record.flag !== null ? record.flag: ''
                             ];
                             csvContent += row.join(',') + '\n';
                         });
