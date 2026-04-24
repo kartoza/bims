@@ -23,15 +23,23 @@
         const availableYears = {{ years }};
         const isPrivateUser = {{ is_private_user|yesno:"true,false" }};
         siteDetailsData = {{ site_details | safe }};
+        const currentYear = {{ current_year }};
+        const lastYear = {{ last_year }};
+        const initialFilterMode = "{{ filter_mode }}";
     </script>
     <style>
-        .year-container {
+        .filter-panel {
             display: flex;
-            max-width: 500px;
             align-items: center;
+            gap: 8px;
+            margin-top: 6px;
+            flex-wrap: wrap;
+            margin-bottom: 10px;
         }
-        #update-date {
-            margin-left: 10px;
+        .filter-sub-controls {
+            display: flex;
+            align-items: center;
+            gap: 8px;
         }
         #ui-datepicker-div {
             top: 100px !important;
@@ -49,21 +57,34 @@
                 <h2>Climate data for {{ site_code }}</h2>
                 <div class="dashboard-close"><i class="fa fa-times"
                                                 aria-hidden="true"></i></div>
-                <div class="form-group year-container">
-                    <label for="year-select" style="margin-right: 5px; margin-top:5px;">Year:</label>&nbsp;
-                    <select id="year-select" class="form-control form-control-sm">
-                        {% for y in years %}
-                            <option value="{{ y }}" {% if y == year %}selected{% endif %}>{{ y }}</option>
-                        {% endfor %}
+                <div class="filter-panel">
+                    <select id="filter-mode-select" class="form-control form-control-sm" style="max-width:220px;">
+                        <option value="last-year"   {% if filter_mode == 'last-year'   %}selected{% endif %}>Last year</option>
+                        <option value="this-year"   {% if filter_mode == 'this-year'   %}selected{% endif %}>This year</option>
+                        <option value="select-year" {% if filter_mode == 'select-year' %}selected{% endif %}>Select year</option>
+                        <option value="date-range"  {% if filter_mode == 'date-range'  %}selected{% endif %}>Select date range</option>
+                        <option value="all-data"    {% if filter_mode == 'all-data'    %}selected{% endif %}>Show all data</option>
                     </select>
-                    &nbsp;or&nbsp;
-                    <input type="text" name="date"
-                           class="form-control form-control-sm date-input"
-                           id="startDate" placeholder="Date start" value="{{ start_date|date:"Y-m-d" }}">
-                    <span>&nbsp;to&nbsp;</span>
-                    <input type="text" name="date" id="endDate"
-                           class="form-control form-control-sm date-input" placeholder="Date end" value="{{ end_date|date:"Y-m-d" }}">
-                    <button class="btn btn-sm btn-primary" id="update-date"><i class="fa fa-arrow-right" aria-hidden="true"></i></button>
+
+                    <!-- Year picker (shared by last-year / this-year / select-year) -->
+                    <div id="ctrl-year" class="filter-sub-controls" style="display:none;">
+                        <select id="year-select" class="form-control form-control-sm" style="width:auto;">
+                            {% for y in years %}
+                                <option value="{{ y }}" {% if y == year %}selected{% endif %}>{{ y }}</option>
+                            {% endfor %}
+                        </select>
+                        <button class="btn btn-sm btn-primary" id="submit-year"><i class="fa fa-arrow-right" aria-hidden="true"></i></button>
+                    </div>
+
+                    <!-- Date range picker -->
+                    <div id="ctrl-range" class="filter-sub-controls" style="display:none;">
+                        <input type="text" class="form-control form-control-sm date-input" id="startDate"
+                               placeholder="Start date" value="{{ start_date|date:'Y-m-d' }}" style="width:130px;">
+                        <span>to</span>
+                        <input type="text" class="form-control form-control-sm date-input" id="endDate"
+                               placeholder="End date" value="{{ end_date|date:'Y-m-d' }}" style="width:130px;">
+                        <button class="btn btn-sm btn-primary" id="submit-range"><i class="fa fa-arrow-right" aria-hidden="true"></i></button>
+                    </div>
                 </div>
             </div>
             <div class="row">
@@ -309,14 +330,61 @@
                     changeYear: true
                 });
             } else {
-                // Fallback to HTML5 date input
                 $('.date-input').attr('type', 'date');
             }
-            $('#year-select').change(function() {
-                const selectedYear = $(this).val();
+
+            function setYearSelectValue(yr) {
+                const $sel = $('#year-select');
+                if (yr && $sel.find(`option[value="${yr}"]`).length) {
+                    $sel.val(yr);
+                } else {
+                    $sel.prop('selectedIndex', 0);
+                }
+            }
+
+            function showFilterControls(mode) {
+                $('#ctrl-year, #ctrl-range').hide();
+                if (mode === 'last-year') {
+                    setYearSelectValue(lastYear);
+                    $('#ctrl-year').show();
+                } else if (mode === 'this-year') {
+                    setYearSelectValue(currentYear);
+                    $('#ctrl-year').show();
+                } else if (mode === 'select-year') {
+                    setYearSelectValue(parseInt(year) || null);
+                    $('#ctrl-year').show();
+                } else if (mode === 'date-range') {
+                    if (!$('#startDate').val()) {
+                        $('#startDate').val(`${currentYear}-01-01`);
+                        $('#endDate').val(`${currentYear}-12-31`);
+                    }
+                    $('#ctrl-range').show();
+                }
+                // 'all-data': no sub-controls shown
+            }
+
+            // Init on page load
+            showFilterControls(initialFilterMode);
+
+            $('#filter-mode-select').change(function() {
+                const mode = $(this).val();
+                if (mode === 'all-data') {
+                    window.location.replace(`/climate/${siteId}/?siteId=${siteId}&allData=1`);
+                } else if (mode === 'last-year') {
+                    window.location.replace(`/climate/${siteId}/${lastYear}/?siteId=${siteId}`);
+                } else if (mode === 'this-year') {
+                    window.location.replace(`/climate/${siteId}/${currentYear}/?siteId=${siteId}`);
+                } else {
+                    showFilterControls(mode);
+                }
+            });
+
+            $('#submit-year').click(function() {
+                const selectedYear = $('#year-select').val();
                 window.location.replace(`/climate/${siteId}/${selectedYear}/?siteId=${siteId}`);
             });
-            $('#update-date').click(function() {
+
+            $('#submit-range').click(function() {
                 const startDate = $('#startDate').val();
                 const endDate = $('#endDate').val();
                 window.location.replace(`/climate/${siteId}/?siteId=${siteId}&startDate=${startDate}&endDate=${endDate}`);

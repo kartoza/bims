@@ -499,6 +499,8 @@ class ClimateSiteView(TemplateView):
     year = None
     start_date = None
     end_date = None
+    all_data = False
+    year_from_url = False
 
     def get_context_data(self, **kwargs):
         start_time = time.time()
@@ -530,16 +532,17 @@ class ClimateSiteView(TemplateView):
         if not self.year and len(context['years']) > 0:
             self.year = int(context['years'][-1])
 
-        # Filter by date range or year
-        if self.start_date and self.end_date:
-            self.start_date = datetime.strptime(self.start_date, '%Y-%m-%d')
-            self.end_date = datetime.strptime(self.end_date, '%Y-%m-%d')
-            climate_data = climate_data.filter(
-                date__gte=self.start_date,
-                date__lte=self.end_date
-            )
-        elif self.year:
-            climate_data = climate_data.filter(year=self.year)
+        # Filter by date range or year (skipped when all_data is requested)
+        if not self.all_data:
+            if self.start_date and self.end_date:
+                self.start_date = datetime.strptime(self.start_date, '%Y-%m-%d')
+                self.end_date = datetime.strptime(self.end_date, '%Y-%m-%d')
+                climate_data = climate_data.filter(
+                    date__gte=self.start_date,
+                    date__lte=self.end_date
+                )
+            elif self.year:
+                climate_data = climate_data.filter(year=self.year)
 
         # Site information
         context['coord'] = [
@@ -554,7 +557,8 @@ class ClimateSiteView(TemplateView):
         context['user_site_code'] = self.location_site.legacy_site_code
         context['user_river_name'] = self.location_site.legacy_river_name
 
-        if len(context['years']) > 0:
+        context['all_data'] = self.all_data
+        if not self.all_data and len(context['years']) > 0:
             context['year'] = int(
                 self.year if self.year else context['years'][-1]
             )
@@ -714,13 +718,48 @@ class ClimateSiteView(TemplateView):
                 })
             context['daily_records_json'] = json.dumps(daily_records_list, cls=DjangoJSONEncoder)
 
+        # Determine active filter mode for the dropdown
+        import datetime as dt
+        current_year = dt.date.today().year
+        last_year = current_year - 1
+        if self.all_data:
+            filter_mode = 'all-data'
+        elif self.start_date:
+            filter_mode = 'date-range'
+        elif self.year_from_url:
+            year_int = int(self.year) if self.year else current_year
+            if year_int == current_year:
+                filter_mode = 'this-year'
+            elif year_int == last_year:
+                filter_mode = 'last-year'
+            else:
+                filter_mode = 'select-year'
+        else:
+            # Defaulted to latest year in data — map to this/last/select-year
+            latest = self.year if self.year else current_year
+            if latest == current_year:
+                filter_mode = 'this-year'
+            elif latest == last_year:
+                filter_mode = 'last-year'
+            else:
+                filter_mode = 'select-year'
+        context['filter_mode'] = filter_mode
+        context['current_year'] = current_year
+        context['last_year'] = last_year
+
         return context
 
     def get(self, request, *args, **kwargs):
         site_id = kwargs.get('site_id', None)
         self.year = kwargs.get('year', None)
+        self.year_from_url = self.year is not None
         self.start_date = request.GET.get('startDate', None)
         self.end_date = request.GET.get('endDate', None)
+        self.all_data = request.GET.get('allData', '0') == '1'
+
+        # Default to whole data when no filter is explicitly provided
+        if not self.year_from_url and not self.start_date and not self.end_date and not self.all_data:
+            self.all_data = True
 
         if not site_id or not request.GET or not request.GET.get('siteId', None):
             raise Http404()
