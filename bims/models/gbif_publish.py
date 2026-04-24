@@ -516,17 +516,20 @@ def seed_contacts_from_source_reference_authors(sender, instance: GbifPublish, c
         return
 
     from bims.models.source_reference import SourceReferenceAuthor
-    sra_qs = (
-        SourceReferenceAuthor.objects
-        .filter(source_reference_id=instance.source_reference_id)
-        .select_related("author", "author__user")
-        .order_by("order")
-    )
-    for sra in sra_qs:
-        author = sra.author
-        GbifPublishContact.objects.create(
+
+    contacts = []
+    for item in instance.source_reference.author_list:
+        if isinstance(item, SourceReferenceAuthor):
+            linked_author = item.author
+            user = linked_author.user
+            name_source = user if user else linked_author
+        else:
+            user = item
+            name_source = item
+        contacts.append(GbifPublishContact(
             gbif_publish=instance,
-            user=author.user if author.user_id else None,
-            individual_name_given=author.first_name or "",
-            individual_name_sur=author.last_name or "",
-        )
+            user=user,
+            individual_name_given=name_source.first_name or "",
+            individual_name_sur=name_source.last_name or "",
+        ))
+    GbifPublishContact.objects.bulk_create(contacts)
