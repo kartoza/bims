@@ -363,22 +363,3 @@ source:
     title: <Source title>
     url: <source URL>
 ```
-
----
-
-## 12. Validation Checklist
-
-Before submitting a ColDP package, verify:
-
-- [ ] All `ID` values are unique within their entity file
-- [ ] All `parentID` values reference existing `ID` values in `NameUsage.tsv`
-- [ ] `status` values use only ColDP-accepted vocabulary
-- [ ] `rank` values use only ColDP-accepted vocabulary
-- [ ] `scientificName` does not contain authorship
-- [ ] `authorship` is populated for species-rank and below
-- [ ] `VernacularName.taxonID` values all exist in `NameUsage.tsv`
-- [ ] `Distribution.taxonID` values all exist in `NameUsage.tsv`
-- [ ] `Media.taxonID` values all exist in `NameUsage.tsv`
-- [ ] `NameRelation.nameID` and `relatedNameID` both exist in `NameUsage.tsv`
-- [ ] `language` codes in `VernacularName` are valid ISO 639-2/3 codes
-- [ ] `metadata.yaml` is present and valid YAML
