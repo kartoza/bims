@@ -60,6 +60,7 @@ SHARED_APPS = (
     'django.contrib.flatpages',
 
     # Utility
+    'drf_yasg',
     'dj_pagination',
     'taggit',
     'mptt',
@@ -400,6 +401,10 @@ INSTITUTION_ID_DEFAULT = os.environ.get('INSTITUTION_ID_DEFAULT', 'bims')
 
 
 CELERY_TASK_PROTOCOL = 1
+
+BIMS_API_SCHEMA_INCLUDE = [
+    '/api/taxa-list/',
+]
 
 REST_FRAMEWORK = {
     'DEFAULT_PAGINATION_CLASS':

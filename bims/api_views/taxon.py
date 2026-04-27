@@ -3,6 +3,9 @@ import ast
 import logging
 import re
 
+from drf_yasg import openapi
+from drf_yasg.utils import swagger_auto_schema
+
 from django.contrib.auth import get_user_model
 from django.db import transaction, IntegrityError
 from django.forms import model_to_dict
@@ -551,7 +554,6 @@ class TaxaList(APIView):
         family_name = request.GET.get('family', '')
         genus_name = request.GET.get('genus', '')
         species_name = request.GET.get('species', '')
-        summary_only = request.GET.get('summary', 'False') == 'True'
         taxon_group_ids = None
 
         authors = []
@@ -747,7 +749,7 @@ class TaxaList(APIView):
                 Q(fada_id__isnull=True) | Q(fada_id='')
             )
 
-        if order and not summary_only:
+        if order:
             if 'total_records' in order:
                 taxon_list = taxon_list.annotate(
                     total_records=Count('biologicalcollectionrecord')
@@ -799,6 +801,171 @@ class TaxaList(APIView):
         assert self.paginator is not None
         return self.paginator.get_paginated_response(data)
 
+    @swagger_auto_schema(
+        operation_summary='List taxa',
+        operation_description=(
+            'Returns a paginated list of taxa (Taxonomy records) with rich '
+            'filtering support.\n\n'
+            '**Authentication**\n'
+            'Public access is allowed when the site setting '
+            '`allow_public_taxa_view` is enabled. Public users always see '
+            'only validated taxa regardless of the `validated` parameter.\n\n'
+            '**Pagination**\n'
+            'Results are page-number paginated. Use `page` and `page_size` '
+            'to navigate. The default page size is 20.'
+        ),
+        manual_parameters=[
+            openapi.Parameter(
+                'taxonGroup', openapi.IN_QUERY,
+                description='Filter by taxon group ID (integer). Includes all descendant groups.',
+                type=openapi.TYPE_INTEGER,
+            ),
+            openapi.Parameter(
+                'id', openapi.IN_QUERY,
+                description='Return a single taxon by its exact ID. All other filters are ignored.',
+                type=openapi.TYPE_INTEGER,
+            ),
+            openapi.Parameter(
+                'taxon', openapi.IN_QUERY,
+                description='Case-insensitive substring search across canonical name, scientific name, and accepted taxonomy name.',
+                type=openapi.TYPE_STRING,
+            ),
+            openapi.Parameter(
+                'rank', openapi.IN_QUERY,
+                description='Filter by a single taxonomic rank (e.g. `SPECIES`, `GENUS`, `FAMILY`).',
+                type=openapi.TYPE_STRING,
+            ),
+            openapi.Parameter(
+                'ranks', openapi.IN_QUERY,
+                description='Filter by multiple taxonomic ranks as a comma-separated list (e.g. `SPECIES,GENUS`).',
+                type=openapi.TYPE_STRING,
+            ),
+            openapi.Parameter(
+                'parent', openapi.IN_QUERY,
+                description='Comma-separated list of parent taxon IDs. Returns all descendants of the given parents.',
+                type=openapi.TYPE_STRING,
+            ),
+            openapi.Parameter(
+                'origins', openapi.IN_QUERY,
+                description='Comma-separated origin keys to filter by (e.g. `alien,native`).',
+                type=openapi.TYPE_STRING,
+            ),
+            openapi.Parameter(
+                'cons_status', openapi.IN_QUERY,
+                description='Comma-separated IUCN Red List category codes (e.g. `EN,VU,CR`).',
+                type=openapi.TYPE_STRING,
+            ),
+            openapi.Parameter(
+                'endemism', openapi.IN_QUERY,
+                description='Comma-separated endemism names to filter by.',
+                type=openapi.TYPE_STRING,
+            ),
+            openapi.Parameter(
+                'taxonomic_status', openapi.IN_QUERY,
+                description='Comma-separated taxonomic status values (case-insensitive, e.g. `accepted,synonym`).',
+                type=openapi.TYPE_STRING,
+            ),
+            openapi.Parameter(
+                'validated', openapi.IN_QUERY,
+                description=(
+                    'Filter by validation status. `True` (default) returns only validated taxa. '
+                    '`False` returns unvalidated taxa; requires expert or superuser permissions '
+                    'for the requested taxon group.'
+                ),
+                type=openapi.TYPE_STRING,
+                enum=['True', 'False'],
+                default='True',
+            ),
+            openapi.Parameter(
+                'is_gbif', openapi.IN_QUERY,
+                description='`True` — only taxa with a GBIF key; `False` — only taxa without one.',
+                type=openapi.TYPE_STRING,
+                enum=['True', 'False'],
+            ),
+            openapi.Parameter(
+                'is_iucn', openapi.IN_QUERY,
+                description='`True` — only taxa with an IUCN Red List ID; `False` — only taxa without one.',
+                type=openapi.TYPE_STRING,
+                enum=['True', 'False'],
+            ),
+            openapi.Parameter(
+                'author', openapi.IN_QUERY,
+                description=(
+                    'Filter by author name(s). Use quoted strings for multi-word authors, '
+                    'e.g. `"Smith, J." "Jones"`.'
+                ),
+                type=openapi.TYPE_STRING,
+            ),
+            openapi.Parameter(
+                'family', openapi.IN_QUERY,
+                description='Filter by family name (exact, case-insensitive).',
+                type=openapi.TYPE_STRING,
+            ),
+            openapi.Parameter(
+                'genus', openapi.IN_QUERY,
+                description='Filter by genus name (exact, case-insensitive).',
+                type=openapi.TYPE_STRING,
+            ),
+            openapi.Parameter(
+                'species', openapi.IN_QUERY,
+                description='Filter by species epithet (exact, case-insensitive).',
+                type=openapi.TYPE_STRING,
+            ),
+            openapi.Parameter(
+                'tags', openapi.IN_QUERY,
+                description='Comma-separated tag names to filter by.',
+                type=openapi.TYPE_STRING,
+            ),
+            openapi.Parameter(
+                'tagFT', openapi.IN_QUERY,
+                description='Tag filter type: `OR` (default) matches any tag; `AND` requires all tags.',
+                type=openapi.TYPE_STRING,
+                enum=['OR', 'AND'],
+                default='OR',
+            ),
+            openapi.Parameter(
+                'bD', openapi.IN_QUERY,
+                description='Comma-separated biographic distribution tag names to filter by.',
+                type=openapi.TYPE_STRING,
+            ),
+            openapi.Parameter(
+                'bDFT', openapi.IN_QUERY,
+                description='Biographic distribution filter type: `OR` (default) or `AND`.',
+                type=openapi.TYPE_STRING,
+                enum=['OR', 'AND'],
+                default='OR',
+            ),
+            openapi.Parameter(
+                'o', openapi.IN_QUERY,
+                description=(
+                    'Ordering field. Prefix with `-` for descending order. '
+                    'Supported values include `canonical_name`, `-canonical_name`, '
+                    '`total_records`, `-total_records`, `endemism_name`, '
+                    '`family`, `genus`, `species`, `accepted_taxonomy_name`, and `origin`.'
+                ),
+                type=openapi.TYPE_STRING,
+            ),
+            openapi.Parameter(
+                'page', openapi.IN_QUERY,
+                description='Page number (1-based).',
+                type=openapi.TYPE_INTEGER,
+                default=1,
+            ),
+            openapi.Parameter(
+                'page_size', openapi.IN_QUERY,
+                description='Number of results per page (default: 20).',
+                type=openapi.TYPE_INTEGER,
+                default=20,
+            ),
+        ],
+        responses={
+            200: openapi.Response(
+                description='Paginated list of taxa.',
+            ),
+            403: openapi.Response(description='Authentication required or insufficient permissions.'),
+        },
+        tags=['Taxa'],
+    )
     def get(self, request, *args):
         from preferences import preferences
         if not request.user.is_authenticated:
@@ -814,13 +981,6 @@ class TaxaList(APIView):
             request._request.GET = mutable
 
         taxon_list = self.get_taxa_by_parameters(request)
-        summary_only = request.GET.get('summary', 'False') == 'True'
-
-        if summary_only:
-            return Response(list(TaxonGroupTaxonomy.objects.filter(
-                taxonomy__in=taxon_list
-            ).values('taxongroup', 'taxongroup__name').annotate(
-                total=Count('taxongroup'))))
 
         self.pagination_class.page_size = request.GET.get('page_size', 20)
         page = self.paginate_queryset(taxon_list)
@@ -847,6 +1007,37 @@ class TaxaList(APIView):
             )
         return Response(serializer.data)
 
+
+class TaxaGroupSummary(APIView):
+    """
+    Returns a count of matching taxa broken down by taxon group.
+
+    Accepts the same filter parameters as `/api/taxa-list/` (except
+    `taxonGroup`, `page`, and `page_size` which are not applicable here).
+    Useful for showing how many results exist across groups without
+    fetching the full paginated list.
+    """
+
+    def get(self, request, *args, **kwargs):
+        from preferences import preferences
+        if not request.user.is_authenticated:
+            if not preferences.SiteSetting.allow_public_taxa_view:
+                return Response(
+                    {'detail': 'Authentication required.'},
+                    status=HTTP_403_FORBIDDEN
+                )
+            mutable = request.GET.copy()
+            mutable['validated'] = 'True'
+            request._request.GET = mutable
+
+        taxon_list = TaxaList.get_taxa_by_parameters(request)
+        return Response(list(
+            TaxonGroupTaxonomy.objects.filter(
+                taxonomy__in=taxon_list
+            ).values('taxongroup', 'taxongroup__name').annotate(
+                total=Count('taxongroup')
+            )
+        ))
 
 
 class TaxonTagAutocompleteAPIView(APIView):
