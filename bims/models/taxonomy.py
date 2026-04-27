@@ -528,6 +528,44 @@ class AbstractTaxonomy(AbstractValidation):
     def sub_tribe_name(self):
         return self.get_taxon_rank_name(TaxonomicRank.SUBTRIBE.name)
 
+    # Aliases used by ColDP export (consistent naming without underscore prefix)
+    @property
+    def subfamily_name(self):
+        return self.sub_family_name
+
+    @property
+    def subtribe_name(self):
+        return self.sub_tribe_name
+
+    # Intermediate rank properties for ColDP export
+    @property
+    def subphylum_name(self):
+        return self.get_taxon_rank_name(TaxonomicRank.SUBPHYLUM.name)
+
+    @property
+    def superclass_name(self):
+        return self.get_taxon_rank_name(TaxonomicRank.SUPERCLASS.name)
+
+    @property
+    def subclass_name(self):
+        return self.get_taxon_rank_name(TaxonomicRank.SUBCLASS.name)
+
+    @property
+    def superorder_name(self):
+        return self.get_taxon_rank_name(TaxonomicRank.SUPERORDER.name)
+
+    @property
+    def suborder_name(self):
+        return self.get_taxon_rank_name(TaxonomicRank.SUBORDER.name)
+
+    @property
+    def infraorder_name(self):
+        return self.get_taxon_rank_name(TaxonomicRank.INFRAORDER.name)
+
+    @property
+    def superfamily_name(self):
+        return self.get_taxon_rank_name(TaxonomicRank.SUPERFAMILY.name)
+
     @property
     def variety_name(self):
         """
