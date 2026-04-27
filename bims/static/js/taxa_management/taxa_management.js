@@ -476,13 +476,14 @@ export const taxaManagement = (() => {
         params.delete('taxonGroup');
         let taxon = params.get('taxon');
 
+        urlObj.pathname = '/api/taxa-group-summary/';
         urlObj.search = params.toString();
 
         let updatedUrl = urlObj.toString();
         if (taxon) {
             // Only search taxa if there is search string
             $.ajax({
-                url: updatedUrl + '&summary=True',
+                url: updatedUrl,
                 dataType: 'json',
                 success: function (data) {
                     if (data.length > 0) {

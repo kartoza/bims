@@ -37,6 +37,7 @@ from bims.api_views.taxon import (
     FindTaxon,
     AddNewTaxon,
     TaxaList,
+    TaxaGroupSummary,
     TaxonTagAutocompleteAPIView, AddTagAPIView, TaxonProposalDetail, IUCNStatusFetchView, TaxonTreeJsonView,
     HarvestIUCNStatus, ApproveTaxonGroupProposalsView, ClearTaxaNotAssociatedInTaxonGroup
 )
@@ -325,6 +326,9 @@ urlpatterns = [
     re_path(r'^taxa-list/$',
         TaxaList.as_view(),
         name='taxa-list'),
+    re_path(r'^taxa-group-summary/$',
+        TaxaGroupSummary.as_view(),
+        name='taxa-group-summary'),
     re_path(r'^update-taxon/(?P<taxon_id>[0-9]+)/(?P<taxon_group_id>[0-9]+)/$',
         UpdateTaxon.as_view(),
         name='update-taxon'),
