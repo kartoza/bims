@@ -81,3 +81,4 @@ from bims.models.certainty_hierarchy import CertaintyHierarchy
 from bims.models.filter_panel_info import FilterPanelInfo
 from bims.models.taxon_tag_description import TaxonTagDescription
 from bims.models.licence import Licence
+from bims.models.taxonomy_checklist import TaxonomyChecklist

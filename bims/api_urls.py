@@ -1,5 +1,6 @@
 from django.urls import re_path, path
 
+from bims.api_views.coldp import ColDPMetadataView
 from bims.api_views.checklist import DownloadChecklistAPIView
 from bims.api_views.clear_cache import ClearCacheView
 from bims.api_views.geocontext import (
@@ -512,5 +513,10 @@ urlpatterns = [
         "approve-group-proposals/",
         ApproveTaxonGroupProposalsView.as_view(),
         name="approve-group-proposals",
-    )
+    ),
+    path(
+        'coldp/metadata/',
+        ColDPMetadataView.as_view(),
+        name='coldp-metadata',
+    ),
 ]

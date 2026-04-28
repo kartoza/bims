@@ -102,7 +102,7 @@ GeoAlchemy2==0.15.1
 geopandas==0.14.4
 
 drf-nested-routers==0.93.5
-drf-yasg==1.21.7
+drf-yasg==1.21.15
 
 # Library to handle geospatial functions
 git+https://github.com/kartoza/CloudNativeGIS.git@0.0.5bims
