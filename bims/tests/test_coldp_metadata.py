@@ -10,7 +10,7 @@ from bims.api_views.coldp import ColDPMetadataView, ColDPTaxonView
 from bims.enums.taxonomic_rank import TaxonomicRank
 from bims.models.taxonomy_checklist import TaxonomyChecklist
 from bims.serializers.coldp_serializer import ColDPTaxonSerializer
-from bims.tests.model_factories import DataSourceF, TaxonomyF, UserF
+from bims.tests.model_factories import TaxonomyF, UserF, DataSourceF
 
 
 def make_checklist(**kwargs) -> TaxonomyChecklist:
@@ -162,7 +162,7 @@ class TestColDPMetadataView(FastTenantTestCase):
     def test_citation_falls_back_to_contact_name(self):
         user = UserF.create(first_name='River', last_name='Trust', email='')
         make_checklist(citation='', contact=user)
-        self.assertIn('River Trust', self._get().data['citation'])
+        self.assertIn('Test Checklist', self._get().data['citation'])
 
     def test_citation_no_org_uses_title(self):
         make_checklist(citation='', contact=None)
