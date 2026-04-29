@@ -423,7 +423,6 @@ class DataSourceF(factory.django.DjangoModelFactory):
     class Meta:
         model = DataSource
 
-    id = factory.Sequence(lambda n: n)
     name = factory.Sequence(lambda n: 'data-source %s' % n)
 
 
