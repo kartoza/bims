@@ -6,9 +6,11 @@ from rest_framework import status
 from rest_framework.test import APIRequestFactory
 from unittest.mock import patch
 
-from bims.api_views.coldp import ColDPMetadataView
+from bims.api_views.coldp import ColDPMetadataView, ColDPTaxonView
+from bims.enums.taxonomic_rank import TaxonomicRank
 from bims.models.taxonomy_checklist import TaxonomyChecklist
-from bims.tests.model_factories import DataSourceF, UserF
+from bims.serializers.coldp_serializer import ColDPTaxonSerializer
+from bims.tests.model_factories import DataSourceF, TaxonomyF, UserF
 
 
 def make_checklist(**kwargs) -> TaxonomyChecklist:
@@ -199,3 +201,329 @@ class TestColDPMetadataUrlResolves(FastTenantTestCase):
 
     def test_url_name_resolves(self):
         self.assertIn('coldp', reverse('coldp-metadata'))
+
+
+# ---------------------------------------------------------------------------
+# _serialize_taxon unit tests
+# ---------------------------------------------------------------------------
+
+class TestColDPTaxonSerializer(FastTenantTestCase):
+    """Unit-tests for ColDPTaxonSerializer."""
+
+    def _make(self, **kwargs):
+        defaults = dict(
+            scientific_name='Homo sapiens',
+            canonical_name='Homo sapiens',
+            rank=TaxonomicRank.SPECIES.name,
+            taxonomic_status='ACCEPTED',
+            author='Linnaeus, 1758',
+        )
+        defaults.update(kwargs)
+        return TaxonomyF.create(**defaults)
+
+    def _data(self, **kwargs):
+        return ColDPTaxonSerializer(self._make(**kwargs)).data
+
+    def test_taxon_id_is_string(self):
+        self.assertIsInstance(self._data()['taxonID'], str)
+
+    def test_taxon_id_uses_site_prefix_when_context_provided(self):
+        t = self._make()
+        data = ColDPTaxonSerializer(t, context={'site_prefix': 'FBIS'}).data
+        self.assertEqual(data['taxonID'], f'FBIS{t.id}')
+
+    def test_taxon_id_falls_back_to_plain_pk_without_context(self):
+        t = self._make()
+        data = ColDPTaxonSerializer(t).data
+        self.assertEqual(data['taxonID'], str(t.id))
+
+    def test_scientific_name_uses_canonical_name(self):
+        data = self._data(canonical_name='Homo sapiens', scientific_name='Homo sapiens L.')
+        self.assertEqual(data['scientificName'], 'Homo sapiens')
+
+    def test_scientific_name_falls_back_to_scientific_name(self):
+        data = self._data(canonical_name='', scientific_name='Homo sapiens L.')
+        self.assertEqual(data['scientificName'], 'Homo sapiens L.')
+
+    def test_authorship(self):
+        self.assertEqual(self._data(author='Linnaeus, 1758')['authorship'], 'Linnaeus, 1758')
+
+    def test_rank_mapped_to_coldp(self):
+        self.assertEqual(self._data(rank=TaxonomicRank.SPECIES.name)['rank'], 'species')
+
+    def test_status_accepted(self):
+        self.assertEqual(self._data(taxonomic_status='ACCEPTED')['status'], 'accepted')
+
+    def test_status_synonym(self):
+        accepted = self._make(taxonomic_status='ACCEPTED')
+        t = self._make(taxonomic_status='SYNONYM', accepted_taxonomy=accepted)
+        self.assertEqual(ColDPTaxonSerializer(t).data['status'], 'synonym')
+
+    def test_status_heterotypic_synonym(self):
+        accepted = self._make(taxonomic_status='ACCEPTED')
+        t = self._make(taxonomic_status='HETEROTYPIC_SYNONYM', accepted_taxonomy=accepted)
+        self.assertEqual(ColDPTaxonSerializer(t).data['status'], 'heterotypic synonym')
+
+    def test_parent_id_for_accepted_taxon(self):
+        parent = self._make(rank=TaxonomicRank.GENUS.name)
+        t = self._make(parent=parent, taxonomic_status='ACCEPTED')
+        ctx = {'site_prefix': 'FBIS'}
+        self.assertEqual(
+            ColDPTaxonSerializer(t, context=ctx).data['parentID'],
+            f'FBIS{parent.id}',
+        )
+
+    def test_parent_id_for_synonym_points_at_accepted(self):
+        accepted = self._make(taxonomic_status='ACCEPTED')
+        synonym = self._make(
+            taxonomic_status='SYNONYM',
+            accepted_taxonomy=accepted,
+            parent=None,
+        )
+        ctx = {'site_prefix': 'FBIS'}
+        self.assertEqual(
+            ColDPTaxonSerializer(synonym, context=ctx).data['parentID'],
+            f'FBIS{accepted.id}',
+        )
+
+    def test_parent_id_empty_when_no_parent(self):
+        t = self._make(taxonomic_status='ACCEPTED')
+        t.parent_id = None
+        self.assertEqual(ColDPTaxonSerializer(t).data['parentID'], '')
+
+    def test_class_field_present(self):
+        self.assertIn('class', self._data())
+
+    def test_classification_keys_present(self):
+        data = self._data()
+        for key in (
+            'kingdom', 'phylum', 'class', 'subclass',
+            'order', 'suborder', 'superfamily',
+            'family', 'tribe', 'subtribe',
+            'genus', 'subgenus', 'species',
+        ):
+            self.assertIn(key, data)
+
+    def test_environment_field_present(self):
+        self.assertIn('environment', self._data())
+
+    def test_environment_from_matching_tag(self):
+        t = self._make()
+        t.tags.add('freshwater')
+        data = ColDPTaxonSerializer(t).data
+        self.assertEqual(data['environment'], 'freshwater')
+
+    def test_environment_case_insensitive(self):
+        t = self._make()
+        t.tags.add('Freshwater')
+        data = ColDPTaxonSerializer(t).data
+        self.assertEqual(data['environment'], 'freshwater')
+
+    def test_environment_first_match_wins(self):
+        t = self._make()
+        # Add a non-environment tag first, then two environment tags
+        t.tags.add('some-other-tag', 'marine', 'freshwater')
+        env = ColDPTaxonSerializer(t).data['environment']
+        self.assertIn(env, ('marine', 'freshwater'))
+
+    def test_environment_empty_when_no_matching_tag(self):
+        t = self._make()
+        t.tags.add('endemic', 'native')
+        data = ColDPTaxonSerializer(t).data
+        self.assertEqual(data['environment'], '')
+
+    def test_environment_empty_when_no_tags(self):
+        self.assertEqual(self._data()['environment'], '')
+
+    def test_code_field_present(self):
+        self.assertIn('code', self._data())
+
+    def test_code_from_matching_tag(self):
+        t = self._make()
+        t.tags.add('zoological')
+        self.assertEqual(ColDPTaxonSerializer(t).data['code'], 'zoological')
+
+    def test_code_case_insensitive(self):
+        t = self._make()
+        t.tags.add('Botanical')
+        self.assertEqual(ColDPTaxonSerializer(t).data['code'], 'botanical')
+
+    def test_code_priority_order(self):
+        t = self._make()
+        # 'botanical' comes before 'zoological' in CODE_VALUES
+        t.tags.add('zoological', 'botanical')
+        self.assertEqual(ColDPTaxonSerializer(t).data['code'], 'botanical')
+
+    def test_code_empty_when_no_matching_tag(self):
+        t = self._make()
+        t.tags.add('freshwater', 'endemic')
+        self.assertEqual(ColDPTaxonSerializer(t).data['code'], '')
+
+    def test_code_empty_when_no_tags(self):
+        self.assertEqual(self._data()['code'], '')
+
+
+# ---------------------------------------------------------------------------
+# ColDPTaxonView endpoint tests
+# ---------------------------------------------------------------------------
+
+class TestColDPTaxonView(FastTenantTestCase):
+
+    def setUp(self):
+        self.factory = APIRequestFactory()
+        self.view = ColDPTaxonView.as_view()
+
+    def _get(self, params=''):
+        request = self.factory.get(f'/api/coldp/taxon/{params}')
+        return self.view(request)
+
+    # --- Basic response structure -------------------------------------------
+
+    def test_returns_200(self):
+        self.assertEqual(self._get().status_code, status.HTTP_200_OK)
+
+    def test_response_has_pagination_keys(self):
+        data = self._get().data
+        for key in ('count', 'next', 'previous', 'results'):
+            self.assertIn(key, data)
+
+    def test_results_is_list(self):
+        self.assertIsInstance(self._get().data['results'], list)
+
+    def test_empty_when_no_taxa(self):
+        self.assertEqual(self._get().data['count'], 0)
+
+    # --- Records returned ---------------------------------------------------
+
+    def test_taxa_appear_in_results(self):
+        TaxonomyF.create(
+            canonical_name='Danio rerio',
+            rank=TaxonomicRank.SPECIES.name,
+            taxonomic_status='ACCEPTED',
+        )
+        data = self._get().data
+        self.assertEqual(data['count'], 1)
+        self.assertEqual(data['results'][0]['scientificName'], 'Danio rerio')
+
+    def test_result_record_has_required_fields(self):
+        TaxonomyF.create(rank=TaxonomicRank.SPECIES.name, taxonomic_status='ACCEPTED')
+        record = self._get().data['results'][0]
+        for field in (
+            'taxonID', 'parentID', 'status', 'scientificName', 'authorship', 'rank',
+            'kingdom', 'phylum', 'class', 'subclass',
+            'order', 'suborder', 'superfamily',
+            'family', 'tribe', 'subtribe',
+            'genus', 'subgenus', 'species',
+        ):
+            self.assertIn(field, record)
+
+    # --- rank filter --------------------------------------------------------
+
+    def test_filter_by_rank(self):
+        TaxonomyF.create(rank=TaxonomicRank.SPECIES.name, taxonomic_status='ACCEPTED')
+        TaxonomyF.create(rank=TaxonomicRank.GENUS.name, taxonomic_status='ACCEPTED')
+        data = self._get(f'?rank={TaxonomicRank.SPECIES.name}').data
+        self.assertEqual(data['count'], 1)
+        self.assertEqual(data['results'][0]['rank'], 'species')
+
+    def test_filter_by_rank_returns_empty_for_no_match(self):
+        TaxonomyF.create(rank=TaxonomicRank.GENUS.name, taxonomic_status='ACCEPTED')
+        self.assertEqual(self._get('?rank=FAMILY').data['count'], 0)
+
+    # --- parent filter ------------------------------------------------------
+
+    def test_filter_by_parent(self):
+        parent = TaxonomyF.create(rank=TaxonomicRank.GENUS.name, taxonomic_status='ACCEPTED')
+        child = TaxonomyF.create(
+            rank=TaxonomicRank.SPECIES.name,
+            taxonomic_status='ACCEPTED',
+            parent=parent,
+        )
+        TaxonomyF.create(rank=TaxonomicRank.SPECIES.name, taxonomic_status='ACCEPTED')
+        data = self._get(f'?parent={parent.id}').data
+        self.assertEqual(data['count'], 1)
+        self.assertIn(str(child.id), data['results'][0]['taxonID'])
+
+    # --- status filter ------------------------------------------------------
+
+    def test_filter_by_status_accepted(self):
+        accepted = TaxonomyF.create(rank=TaxonomicRank.SPECIES.name, taxonomic_status='ACCEPTED')
+        TaxonomyF.create(
+            rank=TaxonomicRank.SPECIES.name,
+            taxonomic_status='SYNONYM',
+            accepted_taxonomy=accepted,
+        )
+        data = self._get('?status=ACCEPTED').data
+        self.assertEqual(data['count'], 1)
+        self.assertEqual(data['results'][0]['status'], 'accepted')
+
+    def test_filter_by_status_synonym(self):
+        accepted = TaxonomyF.create(rank=TaxonomicRank.SPECIES.name, taxonomic_status='ACCEPTED')
+        TaxonomyF.create(
+            rank=TaxonomicRank.SPECIES.name,
+            taxonomic_status='SYNONYM',
+            accepted_taxonomy=accepted,
+        )
+        data = self._get('?status=SYNONYM').data
+        self.assertEqual(data['count'], 1)
+        self.assertEqual(data['results'][0]['status'], 'synonym')
+
+    def test_no_status_filter_returns_all(self):
+        accepted = TaxonomyF.create(rank=TaxonomicRank.SPECIES.name, taxonomic_status='ACCEPTED')
+        TaxonomyF.create(
+            rank=TaxonomicRank.SPECIES.name,
+            taxonomic_status='SYNONYM',
+            accepted_taxonomy=accepted,
+        )
+        self.assertEqual(self._get().data['count'], 2)
+
+    # --- name search (q) ----------------------------------------------------
+
+    def test_search_by_canonical_name(self):
+        TaxonomyF.create(canonical_name='Danio rerio', taxonomic_status='ACCEPTED',
+                         rank=TaxonomicRank.SPECIES.name)
+        TaxonomyF.create(canonical_name='Homo sapiens', taxonomic_status='ACCEPTED',
+                         rank=TaxonomicRank.SPECIES.name)
+        data = self._get('?q=danio').data
+        self.assertEqual(data['count'], 1)
+        self.assertEqual(data['results'][0]['scientificName'], 'Danio rerio')
+
+    def test_search_by_scientific_name(self):
+        TaxonomyF.create(canonical_name='', scientific_name='Danio rerio Hamilton',
+                         taxonomic_status='ACCEPTED', rank=TaxonomicRank.SPECIES.name)
+        TaxonomyF.create(canonical_name='', scientific_name='Homo sapiens Linnaeus',
+                         taxonomic_status='ACCEPTED', rank=TaxonomicRank.SPECIES.name)
+        data = self._get('?q=Hamilton').data
+        self.assertEqual(data['count'], 1)
+
+    def test_search_is_case_insensitive(self):
+        TaxonomyF.create(canonical_name='Danio rerio', taxonomic_status='ACCEPTED',
+                         rank=TaxonomicRank.SPECIES.name)
+        self.assertEqual(self._get('?q=DANIO').data['count'], 1)
+        self.assertEqual(self._get('?q=danio').data['count'], 1)
+
+    def test_search_partial_match(self):
+        TaxonomyF.create(canonical_name='Danio rerio', taxonomic_status='ACCEPTED',
+                         rank=TaxonomicRank.SPECIES.name)
+        TaxonomyF.create(canonical_name='Danio kyathit', taxonomic_status='ACCEPTED',
+                         rank=TaxonomicRank.SPECIES.name)
+        self.assertEqual(self._get('?q=danio').data['count'], 2)
+
+    def test_search_no_match_returns_empty(self):
+        TaxonomyF.create(canonical_name='Danio rerio', taxonomic_status='ACCEPTED',
+                         rank=TaxonomicRank.SPECIES.name)
+        self.assertEqual(self._get('?q=xyzzyx').data['count'], 0)
+
+    def test_search_combines_with_rank_filter(self):
+        TaxonomyF.create(canonical_name='Danio rerio', taxonomic_status='ACCEPTED',
+                         rank=TaxonomicRank.SPECIES.name)
+        TaxonomyF.create(canonical_name='Danio', taxonomic_status='ACCEPTED',
+                         rank=TaxonomicRank.GENUS.name)
+        data = self._get(f'?q=danio&rank={TaxonomicRank.SPECIES.name}').data
+        self.assertEqual(data['count'], 1)
+        self.assertEqual(data['results'][0]['rank'], 'species')
+
+    # --- URL resolves -------------------------------------------------------
+
+    def test_url_name_resolves(self):
+        self.assertIn('coldp', reverse('coldp-taxon'))
