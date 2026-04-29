@@ -10,6 +10,7 @@ from bims.api_views.coldp import ColDPMetadataView, ColDPTaxonView
 from bims.enums.taxonomic_rank import TaxonomicRank
 from bims.models.taxonomy_checklist import TaxonomyChecklist
 from bims.serializers.coldp_serializer import ColDPTaxonSerializer
+from bims.models.data_source import DataSource
 from bims.tests.model_factories import TaxonomyF, UserF, DataSourceF
 
 
@@ -39,6 +40,7 @@ class TestColDPMetadataView(FastTenantTestCase):
         self.factory = APIRequestFactory()
         self.view = ColDPMetadataView.as_view()
         TaxonomyChecklist.objects.all().delete()
+        DataSource.objects.all().delete()
 
     def _get(self, params=''):
         request = self.factory.get(f'/api/coldp/metadata/{params}')
