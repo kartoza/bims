@@ -83,6 +83,11 @@ class UploadRequest(models.Model):
     source = models.CharField(max_length=255, blank=True)
     client_ip = models.GenericIPAddressField(null=True, blank=True)
 
+    gbif_consent = models.BooleanField(
+        default=False,
+        help_text='User consented to publishing these data to GBIF',
+    )
+
     github_issue_number = models.IntegerField(null=True, blank=True)
     github_issue_url = models.URLField(blank=True)
     status = models.CharField(

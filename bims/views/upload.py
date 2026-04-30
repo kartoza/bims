@@ -178,12 +178,14 @@ class UploadView(UserPassesTestMixin, FormView):
 
         file_url = self.request.build_absolute_uri(instance.upload_file.url)
         licence_display = instance.licence.name if instance.licence else '-'
+        gbif_consent_display = 'Yes' if instance.gbif_consent else 'No'
         body = (
             f"**New Upload**\n\n"
             f"- **Name:** {instance.name}\n"
             f"- **Email:** {instance.email}\n"
             f"- **Type:** {instance.upload_type.name}\n"
             f"- **Data Licence:** {licence_display}\n"
+            f"- **GBIF Publishing Consent:** {gbif_consent_display}\n"
             f"- **Notes:** {instance.notes or '-'}\n"
             f"- **File:** [{instance.file_name}]({file_url})\n"
             f"- **Upload ID:** {instance.pk}\n"
@@ -222,6 +224,7 @@ class UploadView(UserPassesTestMixin, FormView):
             upload_type=form.cleaned_data['upload_type'],
             licence=form.cleaned_data.get('licence'),
             notes=form.cleaned_data.get('notes') or '',
+            gbif_consent=form.cleaned_data.get('gbif_consent') or False,
             source=form.cleaned_data.get('source') or 'upload_portal',
             client_ip=get_client_ip(self.request),
             status=UploadRequest.STATUS_SUBMITTED,
