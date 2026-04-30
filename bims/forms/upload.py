@@ -36,6 +36,7 @@ class UploadForm(forms.Form):
         empty_label=None,
     )
     notes = forms.CharField(widget=forms.Textarea, required=False)
+    gbif_consent = forms.BooleanField(required=False)
     decoy = forms.CharField(required=False)
     recaptcha_token = forms.CharField(required=False)
 

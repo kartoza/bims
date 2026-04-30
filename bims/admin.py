@@ -3225,8 +3225,11 @@ class UploadTypeAdmin(admin.ModelAdmin):
 
 @admin.register(UploadRequest)
 class UploadRequestAdmin(admin.ModelAdmin):
-    list_display = ('id', 'created_at', 'name', 'email', 'upload_type', 'status', 'github_issue_number')
-    list_filter = ('upload_type', 'status', 'created_at')
+    list_display = (
+        'id', 'created_at', 'name', 'email', 'upload_type', 'status', 'github_issue_number',
+        'gbif_consent'
+    )
+    list_filter = ('upload_type', 'status', 'created_at', 'gbif_consent')
     search_fields = ('name', 'email', 'notes', 'github_issue_url')
     readonly_fields = ('created_at', 'updated_at', 'client_ip', 'github_issue_number', 'github_issue_url')
 
