@@ -53,3 +53,11 @@ class BioRecordsForm(forms.ModelForm):
         self.helper.html5_required = False
         self.helper.form_tag = False
         super(BioRecordsForm, self).__init__(*args, **kwargs)
+
+    def clean_abundance_number(self):
+        value = self.cleaned_data.get('abundance_number')
+        if value is not None and value <= 0:
+            raise forms.ValidationError(
+                'Abundance must be greater than zero.'
+            )
+        return value

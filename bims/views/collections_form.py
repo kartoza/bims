@@ -304,10 +304,16 @@ def add_survey_occurrences(self, post_data, site_images=None) -> Survey:
         try:
             if post_data[observed_key] == 'True':
                 abundance = post_data[abundance_key]
-                if abundance:
-                    abundance = float(abundance)
-                else:
-                    abundance = 0.0
+                try:
+                    abundance = float(abundance) if abundance else None
+                except ValueError:
+                    abundance = None
+                if abundance is not None and abundance <= 0:
+                    logger.warning(
+                        'Skipping taxon %s: abundance value %s is not greater than zero.',
+                        taxon, abundance
+                    )
+                    continue
                 collection_record, status = (
                     BiologicalCollectionRecord.objects.get_or_create(
                         collection_date=collection_date,

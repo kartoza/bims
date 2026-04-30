@@ -2,12 +2,9 @@ let oldLat = location_site_lat;
 let oldLon = location_site_long;
 
 let taxonAbundanceOnChange = function (e) {
-    let value = parseInt(e.target.value);
-    if (value) {
-        if (value > 0) {
-            $(e.target).parent().parent().find('.observed').prop('checked', true);
-            return true;
-        }
+    let value = parseFloat(e.target.value);
+    if (value && value > 0) {
+        $(e.target).closest('tr').find('.observed').prop('checked', true);
     }
 };
 
@@ -57,7 +54,7 @@ let taxonAutocompleteHandler = {
             '</div>' +
             '</td>');
 
-        let taxonAbundanceInput = $('<input type="number" min="0"' +
+        let taxonAbundanceInput = $('<input type="number" min="0.001"' +
             ' name="' + u.item.value + '-abundance"' +
             ' class="form-control taxon-abundance"' +
             ' placeholder="0">');
@@ -404,6 +401,21 @@ $(function () {
             let alertDiv = $('.alert-danger');
             alertDiv.html('');
             alertDiv.hide();
+
+            // Every observed taxon must have an abundance value greater than zero
+            let zeroAbundanceFound = false;
+            $('.observed:checkbox:checked').each(function () {
+                let $abundanceInput = $(this).closest('tr').find('.taxon-abundance');
+                let abundanceVal = parseFloat($abundanceInput.val());
+                if (!abundanceVal || abundanceVal <= 0) {
+                    $abundanceInput.addClass('error');
+                    zeroAbundanceFound = true;
+                }
+            });
+            if (zeroAbundanceFound) {
+                isError = true;
+                alertMessage += 'All observed taxa must have an abundance value greater than zero.<br/>';
+            }
         }
         if (alertMessage) {
             let alertDiv = $('.alert-danger');
@@ -619,7 +631,7 @@ function renderNewTaxon(taxonId, taxonName) {
         ' </label>' +
         '</div>' +
         '</td>');
-    let taxonAbundanceInput = $('<input type="number" min="0"' +
+    let taxonAbundanceInput = $('<input type="number" min="0.001"' +
         ' name="' + taxonId + '-abundance"' +
         ' class="form-control taxon-abundance"' +
         ' placeholder="0">');

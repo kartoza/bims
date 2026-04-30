@@ -492,6 +492,11 @@ class BiologicalCollectionRecord(AbstractValidation):
             self.save()
 
     def save(self, *args, **kwargs):
+        if self.abundance_number is not None and self.abundance_number <= 0:
+            raise ValueError(
+                f"abundance_number must be greater than zero, got {self.abundance_number!r}"
+            )
+
         max_allowed = 10
         attempt = 0
         is_dictionary = False
