@@ -878,8 +878,15 @@ class OccurrenceProcessor(object):
                 optional_data["sampling_method"] = sampling_method
 
             # -- Optional data - Processing biotope
-            optional_data["biotope"] = self.biotope(row, BROAD_BIOTOPE, BIOTOPE_TYPE_BROAD)
-            optional_data["specific_biotope"] = self.biotope(row, SPECIFIC_BIOTOPE, BIOTOPE_TYPE_SPECIFIC)
+            # Accept both "Broad biotope" and "Broad biotope/habitat" column names.
+            optional_data["biotope"] = (
+                self.biotope(row, BROAD_BIOTOPE, BIOTOPE_TYPE_BROAD)
+                or self.biotope(row, BROAD_BIOTOPE_HABITAT, BIOTOPE_TYPE_BROAD)
+            )
+            optional_data["specific_biotope"] = (
+                self.biotope(row, SPECIFIC_BIOTOPE, BIOTOPE_TYPE_SPECIFIC)
+                or self.biotope(row, SPECIFIC_BIOTOPE_HABITAT, BIOTOPE_TYPE_SPECIFIC)
+            )
             optional_data["substratum"] = self.biotope(row, SUBSTRATUM, BIOTOPE_TYPE_SUBSTRATUM)
 
             # -- Optional data - Abundance
