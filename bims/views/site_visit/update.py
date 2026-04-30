@@ -191,11 +191,16 @@ class SiteVisitUpdateView(
                             collection_record.id
                         ), '') == 'on'
                 )
-                collection_record.abundance_number = (
-                    float(form.data.get('{}-abundance'.format(
-                        collection_record.id
-                    ), 0))
+                _abundance_raw = form.data.get(
+                    '{}-abundance'.format(collection_record.id), ''
                 )
+                try:
+                    _abundance = float(_abundance_raw) if _abundance_raw else None
+                except (ValueError, TypeError):
+                    _abundance = None
+                if _abundance is not None and _abundance <= 0:
+                    continue
+                collection_record.abundance_number = _abundance
                 sampling_effort = form.data.get('sampling_effort', '')
                 if sampling_effort:
                     collection_record.sampling_effort = sampling_effort
@@ -234,10 +239,12 @@ class SiteVisitUpdateView(
                 try:
                     if form.data[observed_key] == 'True':
                         abundance = form.data[abundance_key]
-                        if abundance:
-                            abundance = float(abundance)
-                        else:
-                            abundance = 0.0
+                        try:
+                            abundance = float(abundance) if abundance else None
+                        except (ValueError, TypeError):
+                            abundance = None
+                        if abundance is not None and abundance <= 0:
+                            continue
                         collection_record, status = (
                             BiologicalCollectionRecord.objects.get_or_create(
                                 collection_date=self.object.date,

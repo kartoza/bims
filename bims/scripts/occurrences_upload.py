@@ -909,6 +909,13 @@ class OccurrenceProcessor(object):
                     abundance_number = float(DataCSVUpload.row_value(row, ABUNDANCE_VALUE))
                 except ValueError:
                     pass
+            if abundance_number is not None and abundance_number <= 0:
+                self.handle_error(
+                    row=row,
+                    message=f"Abundance value '{abundance_number}' is invalid; "
+                            f"abundance must be greater than zero."
+                )
+                return
             if abundance_number:
                 optional_data["abundance_number"] = abundance_number
             if abundance_type:
