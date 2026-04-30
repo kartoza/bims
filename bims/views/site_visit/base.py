@@ -129,26 +129,28 @@ class SiteVisitBaseView(View):
 
     def sampling_effort(self):
         """Get existing sampling effort value from collections"""
-        sampling_effort = self.collection_records.exclude(
+        sampling_effort = ''
+        sampling_effort_measure = ''
+        coll_with_sampling_efforts = self.collection_records.exclude(
             sampling_effort=''
         ).order_by(Length('sampling_effort').desc())
-        try:
-            if sampling_effort.exists():
-                sampling_effort_str = sampling_effort[0].sampling_effort
-                sampling_effort_measure = sampling_effort[0].sampling_effort_link
-                sampling_effort_measure_str = ''
-                if sampling_effort_measure:
-                    sampling_effort_measure_str = (
-                        sampling_effort_measure.id
-                    )
-                sampling_effort_arr = sampling_effort_str.split(' ')
-                return (
-                    sampling_effort_arr[0].strip(),
-                    sampling_effort_measure_str
-                )
-        except IndexError:
-            pass
-        return '', ''
+        if coll_with_sampling_efforts.exists():
+            sampling_effort = (
+                coll_with_sampling_efforts.first().sampling_effort
+            )
+            sampling_effort_arr = sampling_effort.split(' ')
+            sampling_effort = sampling_effort_arr[0]
+
+        coll_with_sampling_effort_measures = self.collection_records.filter(
+            sampling_effort_link__isnull=False
+        )
+
+        if coll_with_sampling_effort_measures:
+            sampling_effort_measure = (
+                coll_with_sampling_effort_measures.first().sampling_effort_link.id
+            )
+
+        return sampling_effort, sampling_effort_measure
 
     def abundance_type(self):
         """Get existing abundance type from collection"""

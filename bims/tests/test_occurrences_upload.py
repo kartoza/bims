@@ -2,6 +2,7 @@ import io
 import os
 import mock
 import json
+import datetime
 
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django_tenants.test.cases import FastTenantTestCase
@@ -18,10 +19,13 @@ from bims.tests.model_factories import (
     UploadSessionF,
     TaxonomyF,
     TaxonGroupF, BiologicalCollectionRecordF, SiteF,
+    LocationSiteF,
 )
-from bims.models import UploadSession, BiologicalCollectionRecord
+from bims.models import UploadSession, BiologicalCollectionRecord, Survey
+from bims.models.sampling_effort_measure import SamplingEffortMeasure
 from bims.scripts.occurrences_upload import (
-    OccurrencesCSVUpload
+    OccurrencesCSVUpload,
+    OccurrenceProcessor,
 )
 
 from bims.models import SiteSetting
@@ -291,3 +295,103 @@ class TestCollectionUpload(FastTenantTestCase):
                 site__longitude=-111.2437
             ).count(), 1
         )
+
+
+class TestProcessSurveySamplingEffort(FastTenantTestCase):
+    """Tests that process_survey separates surveys by sampling effort."""
+
+    def setUp(self):
+        self.collector = UserF.create()
+        self.site = LocationSiteF.create()
+        self.date = datetime.date(2024, 1, 15)
+        self.time_measure, _ = SamplingEffortMeasure.objects.get_or_create(name='Time(min)')
+        self.area_measure, _ = SamplingEffortMeasure.objects.get_or_create(name='Area(m2)')
+        self.processor = OccurrenceProcessor()
+
+    def _process(self, sampling_effort, sampling_effort_link):
+        self.processor.process_survey(
+            record={},
+            location_site=self.site,
+            sampling_date=self.date,
+            collector=self.collector,
+            sampling_effort=sampling_effort,
+            sampling_effort_link=sampling_effort_link,
+        )
+        return self.processor.survey
+
+    def _add_record(self, survey, sampling_effort, sampling_effort_link):
+        taxonomy = TaxonomyF.create()
+        BiologicalCollectionRecordF.create(
+            site=self.site,
+            survey=survey,
+            owner=self.collector,
+            sampling_effort=sampling_effort,
+            sampling_effort_link=sampling_effort_link,
+            taxonomy=taxonomy,
+        )
+
+    def test_different_effort_value_creates_separate_surveys(self):
+        """Two rows with the same site/date/collector but different
+        sampling_effort values must land in different surveys."""
+        survey_a = self._process('10', self.time_measure)
+        self._add_record(survey_a, '10', self.time_measure)
+
+        survey_b = self._process('20', self.time_measure)
+
+        self.assertNotEqual(survey_a.id, survey_b.id)
+        self.assertEqual(Survey.objects.filter(
+            site=self.site,
+            date=self.date,
+            collector_user=self.collector,
+        ).count(), 2)
+
+    def test_different_effort_measure_creates_separate_surveys(self):
+        """Two rows with the same effort value but different measures must
+        land in different surveys."""
+        survey_a = self._process('10', self.time_measure)
+        self._add_record(survey_a, '10', self.time_measure)
+
+        survey_b = self._process('10', self.area_measure)
+
+        self.assertNotEqual(survey_a.id, survey_b.id)
+
+    def test_same_effort_reuses_survey(self):
+        """A row with the same effort combination must reuse the existing survey."""
+        survey_a = self._process('10', self.time_measure)
+        self._add_record(survey_a, '10', self.time_measure)
+
+        survey_same = self._process('10', self.time_measure)
+
+        self.assertEqual(survey_a.id, survey_same.id)
+        self.assertEqual(Survey.objects.filter(
+            site=self.site,
+            date=self.date,
+            collector_user=self.collector,
+        ).count(), 1)
+
+    def test_no_existing_survey_creates_one(self):
+        """When no survey exists yet, one is created."""
+        self.assertEqual(Survey.objects.filter(
+            site=self.site,
+            date=self.date,
+            collector_user=self.collector,
+        ).count(), 0)
+
+        survey = self._process('5', self.time_measure)
+
+        self.assertIsNotNone(survey)
+        self.assertEqual(Survey.objects.filter(
+            site=self.site,
+            date=self.date,
+            collector_user=self.collector,
+        ).count(), 1)
+
+    def test_survey_with_no_records_is_reused(self):
+        """A survey that exists but has no records yet should be reused
+        regardless of the requested sampling effort."""
+        survey_a = self._process('10', self.time_measure)
+        # No record added — survey is empty
+
+        survey_b = self._process('99', self.area_measure)
+
+        self.assertEqual(survey_a.id, survey_b.id)
