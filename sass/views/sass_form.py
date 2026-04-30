@@ -164,7 +164,7 @@ class SassFormView(UserPassesTestMixin, TemplateView, SessionFormMixin):
                 if rate.exists():
                     rate = rate[0]
                 else:
-                    rate = Rate.objects.none()
+                    rate = None
                 biotope_fraction, created = (
                     SassBiotopeFraction.objects.get_or_create(
                         rate=rate,
@@ -209,7 +209,7 @@ class SassFormView(UserPassesTestMixin, TemplateView, SessionFormMixin):
             # S, Veg, GSM
             if biotope_identifier in biotope_labels:
                 biotope_name = biotope_labels[biotope_identifier]
-                biotope = Biotope.objects.get(
+                biotope, _ = Biotope.objects.get_or_create(
                     name=biotope_name
                 )
                 try:
@@ -266,7 +266,7 @@ class SassFormView(UserPassesTestMixin, TemplateView, SessionFormMixin):
                         original_species_name=sass_taxon.taxon.canonical_name,
                     )
                     site_visit_taxa.update(
-                        source_collection=self.source_collection
+                        source_collection=self.source_collection or ''
                     )
                     site_visit_taxon = site_visit_taxa[0]
                     created = False
@@ -277,7 +277,7 @@ class SassFormView(UserPassesTestMixin, TemplateView, SessionFormMixin):
                 site_visit_taxon.collection_date = date
                 site_visit_taxon.taxon_abundance = taxon_abundance
                 site_visit_taxon.collector_user = site_visit.collector
-                site_visit_taxon.source_collection = self.source_collection
+                site_visit_taxon.source_collection = self.source_collection or ''
                 # Set correct owner
                 site_visit_taxon.owner = site_visit.owner
                 site_visit_taxon.source_reference = source_reference
