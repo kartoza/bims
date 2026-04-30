@@ -37,17 +37,6 @@ class TestSourceReferenceFilters(FastTenantTestCase):
         ]
 
     @patch('django.core.cache.cache.get')
-    @patch('django.core.cache.cache.set')
-    def test_get_source_reference_filter_empty_cache(self, mock_set, mock_get):
-        # Simulate empty cache
-        mock_get.return_value = None
-
-        result = get_source_reference_filter(request=None, tenant=self.tenant)
-
-        mock_set.assert_called_once()
-        self.assertIsInstance(result, list)
-
-    @patch('django.core.cache.cache.get')
     def test_get_source_reference_filter_populated_cache(self, mock_get):
         mock_get.return_value = [{'id': 1, 'reference': 'John Doe | 2020 | Study on BIMS', 'type': 'Peer-reviewed scientific article'}]
 

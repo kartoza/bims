@@ -192,29 +192,53 @@ class OccurrenceProcessor(object):
         self.handle_error(row=row, message=f"Incorrect date format: {date_string}")
         return None
 
-    def process_survey(self, record, location_site, sampling_date, collector):
-        """Process survey data"""
-        try:
-            self.survey, _ = Survey.objects.get_or_create(
-                site=location_site,
-                date=sampling_date,
-                collector_user=collector,
-                owner=collector,
-                validated=True
-            )
-            if not self.survey.uuid:
-                self.survey.save()
+    def process_survey(
+        self,
+        record,
+        location_site,
+        sampling_date,
+        collector,
+        sampling_effort='',
+        sampling_effort_link=None,
+    ):
+        """Process survey data.
+
+        Rows that share the same site/date/collector but differ in
+        sampling_effort value or measure are assigned to separate surveys.
+        """
+        base_filter = dict(
+            site=location_site,
+            date=sampling_date,
+            collector_user=collector,
+            owner=collector,
+            validated=True,
+        )
+        candidate_surveys = Survey.objects.filter(**base_filter)
+
+        matched_survey = None
+        for survey in candidate_surveys:
+            records = survey.biological_collection_record.all()
+            if not records.exists():
+                matched_survey = survey
+                break
+            if records.filter(
+                sampling_effort=sampling_effort,
+                sampling_effort_link=sampling_effort_link,
+            ).exists():
+                matched_survey = survey
+                break
+
+        if matched_survey:
+            self.survey = matched_survey
             self._log(logging.DEBUG, f"Using survey id={self.survey.id}")
-        except Survey.MultipleObjectsReturned:
-            self.survey = Survey.objects.filter(
-                site=location_site,
-                date=sampling_date,
-                collector_user=collector,
-                owner=collector,
-                validated=True
-            ).first()
-            if self.survey:
-                self._log(logging.WARNING, f"Multiple surveys found; using first id={self.survey.id}")
+        else:
+            self.survey = Survey.objects.create(**base_filter)
+            self._log(
+                logging.DEBUG,
+                f"Created new survey id={self.survey.id} "
+                f"(sampling_effort={sampling_effort!r}, "
+                f"sampling_effort_link={sampling_effort_link})"
+            )
 
         for survey_data_key in SURVEY_DATA:
             if survey_data_key in record and DataCSVUpload.row_value(record, survey_data_key):
@@ -782,12 +806,42 @@ class OccurrenceProcessor(object):
                         _collector.organization = DataCSVUpload.row_value(row, CUSTODIAN)
                         _collector.save()
 
-            # -- Get or create a survey
+            # -- Optional data - Sampling effort (parsed early so process_survey
+            #    can use the values to discriminate between surveys)
+            sampling_effort = ""
+            if SAMPLING_EFFORT_VALUE in row and DataCSVUpload.row_value(row, SAMPLING_EFFORT_VALUE):
+                sampling_effort += DataCSVUpload.row_value(row, SAMPLING_EFFORT_VALUE)
+            optional_data["sampling_effort"] = sampling_effort
+
+            sampling_effort_measure = DataCSVUpload.row_value(row, SAMPLING_EFFORT)
+            sampling_effort_link = None
+            if sampling_effort_measure:
+                if "min" in sampling_effort_measure.lower():
+                    sampling_effort_link, _ = SamplingEffortMeasure.objects.get_or_create(name="Time(min)")
+                elif (
+                    "area" in sampling_effort_measure.lower()
+                    or "m2" in sampling_effort_measure.lower()
+                    or "meter" in sampling_effort_measure.lower()
+                    or "metre" in sampling_effort_measure.lower()
+                ):
+                    sampling_effort_link, _ = SamplingEffortMeasure.objects.get_or_create(name="Area(m2)")
+                elif "replicates" in sampling_effort_measure.lower():
+                    sampling_effort_link, _ = SamplingEffortMeasure.objects.get_or_create(name="Replicates")
+                else:
+                    sampling_effort_link, _ = SamplingEffortMeasure.objects.get_or_create(
+                        name=sampling_effort_measure
+                    )
+                optional_data["sampling_effort_link"] = sampling_effort_link
+
+            # -- Get or create a survey (uses sampling effort to separate
+            #    surveys that differ only in effort value/measure)
             self.process_survey(
                 row,
                 location_site,
                 sampling_date,
                 collector=collectors[0],
+                sampling_effort=sampling_effort,
+                sampling_effort_link=sampling_effort_link,
             )
 
             # -- Apply end embargo date to the survey
@@ -822,31 +876,6 @@ class OccurrenceProcessor(object):
                         )[0]
             if sampling_method:
                 optional_data["sampling_method"] = sampling_method
-
-            # -- Optional data - Sampling effort
-            sampling_effort = ""
-            if SAMPLING_EFFORT_VALUE in row and DataCSVUpload.row_value(row, SAMPLING_EFFORT_VALUE):
-                sampling_effort += DataCSVUpload.row_value(row, SAMPLING_EFFORT_VALUE)
-            optional_data["sampling_effort"] = sampling_effort
-
-            sampling_effort_measure = DataCSVUpload.row_value(row, SAMPLING_EFFORT)
-            if sampling_effort_measure:
-                if "min" in sampling_effort_measure.lower():
-                    sampling_effort_measure, _ = SamplingEffortMeasure.objects.get_or_create(name="Time(min)")
-                elif (
-                    "area" in sampling_effort_measure.lower()
-                    or "m2" in sampling_effort_measure.lower()
-                    or "meter" in sampling_effort_measure.lower()
-                    or "metre" in sampling_effort_measure.lower()
-                ):
-                    sampling_effort_measure, _ = SamplingEffortMeasure.objects.get_or_create(name="Area(m2)")
-                elif "replicates" in sampling_effort_measure.lower():
-                    sampling_effort_measure, _ = SamplingEffortMeasure.objects.get_or_create(name="Replicates")
-                else:
-                    sampling_effort_measure, _ = SamplingEffortMeasure.objects.get_or_create(
-                        name=sampling_effort_measure
-                    )
-                optional_data["sampling_effort_link"] = sampling_effort_measure
 
             # -- Optional data - Processing biotope
             optional_data["biotope"] = self.biotope(row, BROAD_BIOTOPE, BIOTOPE_TYPE_BROAD)
