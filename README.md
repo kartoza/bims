@@ -1,89 +1,138 @@
-![Test Badge](https://github.com/kartoza/django-bims/actions/workflows/test.yml/badge.svg)
-![Build Badge](https://github.com/kartoza/django-bims/actions/workflows/dockerimage.yml/badge.svg)
+<div align="center">
 
-Documentation : https://kartoza.github.io/bims-website/
+# Biodiversity Information Management System
 
-Developer Guide : https://github.com/kartoza/django-bims/blob/develop/README-dev.md
+**BIMS is an open-source platform for managing, analysing, visualising, and sharing biodiversity data from field collection through to decision support.**
 
-## Welcome
+[![Tests](https://github.com/kartoza/django-bims/actions/workflows/test.yml/badge.svg)](https://github.com/kartoza/django-bims/actions/workflows/test.yml)
+[![Docker image](https://github.com/kartoza/django-bims/actions/workflows/dockerimage.yml/badge.svg)](https://github.com/kartoza/django-bims/actions/workflows/dockerimage.yml)
 
-Welcome to the Biodiversity Information Management System (BIMS) Source Code Repository
+[Website](https://bims.kartoza.com/) |
+[Documentation](https://kartoza.github.io/bims-website/) |
+[Developer guide](README-dev.md) |
+[Source code](https://github.com/kartoza/django-bims)
 
-The latest source code is available at http://github.com/kartoza/django-bims.
+</div>
 
-BIMS is a platform for managing and visualising biodiversity data.
+## Overview
 
-Make your data available to decision makers, researchers & biologists.
+The Biodiversity Information Management System (BIMS) helps teams turn species and biodiversity records into usable evidence for conservation, ecosystem management, research, reporting, and policy work.
 
-This project is a [Freshwater Researcy Centre](https://www.frcsa.org.za/) FRC Initiative, supported by [Kartoza](https://kartoza.com) as implementing partner.
+BIMS is built for biodiversity planners, conservation agencies, protected-area teams, researchers, environmental consultants, species specialists, and data publishers who need a shared place to collect, manage, explore, map, and publish biodiversity data.
 
-See a running instance at https://freshwaterbiodiversity.org/
+## What BIMS Supports
 
-* **Developers:** See our `project setup guide`_ and `developer guide`_
+- Species occurrence and abundance records
+- Taxon checklists, survey records, monitoring data, and abundance observations
+- Biodiversity datasets across taxonomic groups, habitats, and ecosystems
+- Habitat, site condition, ecological, and abiotic parameters
+- Physico-chemical measurements
+- Environmental and time-series measurements
+- Photos, notes, field observations, and supporting metadata
+- Map-based exploration, filtering, visualisation, and download workflows
+- Open data publication and decision-support portals
 
+## Running Portals
 
-## Project Activity
+BIMS powers biodiversity information systems across multiple regions and use cases:
 
-|Test Badge|
+| Portal | Focus |
+| --- | --- |
+| [FBIS South Africa](https://freshwaterbiodiversity.org/) | Species biodiversity and biomonitoring in South Africa |
+| [SANParks BIMS](https://bims.sanparks.org/) | Internal biodiversity data management for South African National Parks and marine protected areas |
+| [RBIS Rwanda](https://rbis.ur.ac.rw/) | National biodiversity data and reporting for Rwanda |
+| [Kafue Zambia](https://kafue.kartoza.com/) | Wetlands information for the Kafue Flats in Zambia |
+| [FBIS Africa](https://fbisafrica.org/) | Species biodiversity data and decision-support tools for Africa |
+| [FADA](https://fada.kartoza.com/) | Global animal diversity checklists and taxonomic backbone data |
+| [FIPbio](https://fip-bio.igb-berlin.de/) | Federated biodiversity datasets for transboundary basin-scale decision-making |
+| ORBIS Botswana / Okavango | Okavango biodiversity repository aligned with basin management. Currently offline |
 
-|Build Badge|
+## Mobile Data Capture
 
+The FBIS mobile app lets field teams capture species observations, site conditions, photos, and notes in the field, then sync them when connectivity is available.
 
-## Quick Installation Guide
+- [Get it on Google Play](https://play.google.com/store/apps/details?gl=US&hl=en&id=com.fbis)
+- [Get it on the App Store](https://apps.apple.com/mu/app/fbis/id6473277389)
 
-For deployment we use `docker`_ so you need to have docker
-running on the host. HealthyRivers is a django app so it will help if you have
-some knowledge of running a django site.
+## Technology
 
-    git clone git://github.com/kartoza/django-bims.git
+This repository contains the Django implementation of BIMS. The application is Docker-first for local development and deployment, and includes support for GIS-backed biodiversity workflows, search indexing, background workers, static asset collection, and portal configuration.
 
-    make build
+Project metadata:
 
-    make permissions
+- Python 3.12+
+- Django 6
+- PostgreSQL/PostGIS
+- Docker Compose
+- AGPL-3.0 license
 
-    make web
+## Quick Start
 
-    # Wait a few seconds for the DB to start before to do the next command
+Install Docker and Docker Compose, then build and start the application:
 
-    make migrate
+```bash
+git clone https://github.com/kartoza/django-bims.git
+cd django-bims
 
-    make collectstatic
-
-    # Finally we can rebuild our search indexes if needed
-
-    make rebuildindex
-
-
-So as to create your admin account:
+make build
+make permissions
+make web
 ```
+
+Wait a few seconds for the database container to start, then initialise Django:
+
+```bash
+make migrate
+make collectstatic
+make rebuildindex
+```
+
+Create an administrator account:
+
+```bash
 make superuser
 ```
 
+Useful commands:
 
+```bash
+make dev          # Run the development stack
+make logs         # Follow uwsgi logs
+make dblogs       # Follow database logs
+make updateindex  # Update search indexes
+make down         # Stop the Docker Compose stack
+```
 
-Optional keys on project
----------------------------
-To use some feature, there are keys that needs to be included on the project.
-Please put the keys on the secret.py
+See the [developer guide](README-dev.md) for development environment notes, IDE setup, and additional Docker workflows.
 
-The keys are:
+## Optional Configuration
 
-1. To show bing map, use your key of bing (https://www.bingmapsportal.com/) and put it in `core/settings/secret.py` with key BING_MAP_KEY
+Some map layers require API keys. Add these values to `core/settings/secret.py` when needed:
 
-2. To show openmaptile map (terrain and other style), use your key of maptile (https://www.maptiler.com/cloud/) and put it in `core/settings/secret.py` with key MAP_TILER_KEY
+| Setting | Purpose | Provider |
+| --- | --- | --- |
+| `MAP_TILER_KEY` | Enables MapTiler terrain and style layers | [MapTiler Cloud](https://www.maptiler.com/cloud/) |
 
+## Documentation
 
-## Thank you
-_________
+- [BIMS website](https://bims.kartoza.com/)
+- [Project documentation](https://kartoza.github.io/bims-website/)
+- [Developer guide](README-dev.md)
+- [GitHub issues](https://github.com/kartoza/django-bims/issues)
 
+## Open Source
 
-Thank you to the individual contributors who have helped to build BIMS:
+BIMS is developed in the open and maintained collaboratively. Contributions that improve biodiversity data management, field collection, portal deployment, documentation, testing, and data interoperability are welcome.
 
-* Dr. Helen Dallas (Implementation Lead)
-* Dr. Jeremy Shelton (Freshwater Expert)
-* Tim Sutton (Lead developer): tim@kartoza.com
-* Dimas Ciputra: dimas@kartoza.com
-* Irwan Fathurrahman: irwan@kartoza.com
-* Fanevanjanahary: faneva@kartoza.com
-* Anita Hapsari: anita@kartoza.com
+This project is a [Freshwater Research Centre](https://www.frcsa.org.za/) initiative, supported by [Kartoza](https://kartoza.com) as implementing partner.
 
+## Contributors
+
+Thank you to the people who have helped build BIMS:
+
+- Dr. Helen Dallas, implementation lead
+- Dr. Jeremy Shelton, biodiversity expert
+- Tim Sutton, lead developer
+- Dimas Ciputra, lead developer
+- Irwan Fathurrahman
+- Fanevanjanahary
