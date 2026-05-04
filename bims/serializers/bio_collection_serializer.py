@@ -358,16 +358,16 @@ class BioCollectionOneRowSerializer(
         taxon = obj.taxonomy
         if taxon.is_synonym_or_doubtful and taxon.accepted_taxonomy:
             taxon = taxon.accepted_taxonomy
-        if taxon.iucn_status:
+        if taxon and taxon.iucn_status:
             category = dict(IUCNStatus.CATEGORY_CHOICES)
             try:
-                return category[obj.taxonomy.iucn_status.category]
+                return category[taxon.iucn_status.category]
             except KeyError:
                 pass
         return 'Not evaluated'
 
     def get_conservation_status_national(self, obj):
-        if obj.taxonomy.national_conservation_status:
+        if obj.taxonomy and obj.taxonomy.national_conservation_status:
             category = dict(IUCNStatus.CATEGORY_CHOICES)
             try:
                 return category[
