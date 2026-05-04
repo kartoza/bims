@@ -20,6 +20,35 @@ from bims.download.csv_download import (
 )
 
 
+def _last_non_empty_value(values):
+    if not values:
+        return ''
+    non_empty = [value for value in values if value not in (None, '')]
+    return non_empty[-1] if non_empty else values[-1]
+
+
+def normalize_download_params(params):
+    """
+    Normalize download params into a flat dict of scalar values.
+
+    If the same key appears multiple times, keep the last non-empty value.
+    This prevents malformed appended query parameters from being persisted as
+    lists and matches current download behavior, which expects scalar values.
+    """
+    if hasattr(params, 'lists'):
+        items = params.lists()
+    else:
+        items = params.items()
+
+    normalized = {}
+    for key, value in items:
+        if isinstance(value, (list, tuple)):
+            normalized[key] = _last_non_empty_value(list(value))
+        else:
+            normalized[key] = value
+    return normalized
+
+
 def params_from_dashboard_url(download_request):
     """
     Derive download_params and download_path from dashboard_url when they are
@@ -44,9 +73,7 @@ def params_from_dashboard_url(download_request):
         param_string = parsed.query
 
     qs = parse_qs(param_string, keep_blank_values=False)
-    params_dict = {
-        k: v[0] if len(v) == 1 else v for k, v in qs.items()
-    }
+    params_dict = normalize_download_params(qs)
     params_dict['downloadRequestId'] = str(download_request.pk)
 
     username = (

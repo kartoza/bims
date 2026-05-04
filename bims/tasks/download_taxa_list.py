@@ -459,11 +459,11 @@ def process_download_pdf_taxa_list(
             if order_by == 'family':
                 key = s.family.canonical_name if s.family else 'No Family'
                 key_author = s.family.author if s.family and s.family.author else ''
-                key_id = s.family.id
+                key_id = s.family.id if s.family else 'no-family'
             else:
                 key = s.genus.canonical_name if s.genus else ''
                 key_author = s.genus.author if s.genus and s.genus.author else ''
-                key_id = s.genus.id
+                key_id = s.genus.id if s.genus else None
             if not key:
                 continue
             if key_id not in order_by_dict:

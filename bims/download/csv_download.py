@@ -36,7 +36,11 @@ class CsvDownload(APIView):
         ).hexdigest()
 
     def get(self, request, *args):
-        from bims.models.download_request import DownloadRequest
+        from bims.models.download_request import (
+            DownloadRequest,
+            normalize_download_params,
+            params_from_dashboard_url,
+        )
         # User need to be logged in before requesting csv download
         if not request.user.is_authenticated:
             return HttpResponseForbidden('Not logged in')
@@ -74,11 +78,17 @@ class CsvDownload(APIView):
                 'message': 'Download request does not exist'
             })
 
+        parsed_path_file, parsed_params_dict = params_from_dashboard_url(
+            download_request
+        )
+        if parsed_path_file and parsed_params_dict:
+            path_file = parsed_path_file
+            filename = os.path.basename(path_file)
+            params_dict = parsed_params_dict
+        else:
+            params_dict = normalize_download_params(self.request.GET)
+
         # Persist the path and params so the resume task can restart the download
-        params_dict = dict(self.request.GET)
-        # Flatten single-value lists (QueryDict stores all values as lists)
-        params_dict = {k: v[0] if isinstance(v, list) and len(v) == 1 else v
-                       for k, v in params_dict.items()}
         needs_save = False
         if download_request.download_path != path_file:
             download_request.download_path = path_file
@@ -93,7 +103,7 @@ class CsvDownload(APIView):
         approval_needed = preferences.SiteSetting.enable_download_request_approval
         if max_limit and max_limit > 0 and not download_request.approved:
             from bims.api_views.search import CollectionSearch
-            _search = CollectionSearch(request.GET, request.user.id)
+            _search = CollectionSearch(params_dict, request.user.id)
             _total = _search.process_search().count()
             if _total > max_limit:
                 send_new_csv_notification(
@@ -163,7 +173,7 @@ class CsvDownload(APIView):
 
             download_collection_record_task.delay(
                 path_file,
-                self.request.GET,
+                params_dict,
                 send_email=True,
                 user_id=self.request.user.id
             )
