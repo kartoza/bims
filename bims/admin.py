@@ -27,6 +27,7 @@ from django.utils.translation import gettext_lazy as _
 from django.contrib.auth.models import Permission
 from django.contrib.flatpages.admin import FlatPageAdmin
 from django.contrib.flatpages.models import FlatPage
+from django.contrib.admin.utils import get_deleted_objects as admin_get_deleted_objects
 from django.db import models
 from django.db.models import Q, Count, F, Case, When, IntegerField
 from django.utils.html import format_html
@@ -48,6 +49,7 @@ from bims.enums import TaxonomicGroupCategory, TaxonomicStatus, TaxonomicRank
 from bims.models.harvest_schedule import HarvestPeriod
 from bims.models.record_type import merge_record_types
 from bims.tasks import fetch_vernacular_names
+from bims.tasks.checklist import publish_versions_task
 from bims.tasks.taxa import fetch_iucn_status as fetch_iucn_status_task
 from bims.utils.endemism import merge_endemism
 from bims.utils.sampling_method import merge_sampling_method
@@ -1348,7 +1350,8 @@ class TaxonGroupAdmin(admin.ModelAdmin):
     list_display = (
         'name',
         'singular_name',
-        'category'
+        'category',
+        'col_enabled',
     )
     search_fields = (
         'name',
@@ -1356,6 +1359,7 @@ class TaxonGroupAdmin(admin.ModelAdmin):
     )
     list_filter = (
         'category',
+        'col_enabled',
     )
     filter_horizontal = (
         'experts',
@@ -1596,6 +1600,8 @@ class TaxonomyAdmin(admin.ModelAdmin):
                 'last_modified_by',
                 'subgenus',
                 'verified',
+                'checklist_version_uuid',
+                'last_checklist_published_uuid'
             )
         }),
         (_('Names & Tags'), {
@@ -3263,3 +3269,239 @@ class TaxonTagDescriptionAdmin(admin.ModelAdmin):
             return obj.description[:100] + '...' if len(obj.description) > 100 else obj.description
         return '-'
     description_preview.short_description = 'Description'
+
+
+# ---------------------------------------------------------------------------
+# TaxonomyChecklist admin
+# ---------------------------------------------------------------------------
+
+from bims.models.taxonomy_checklist import TaxonomyChecklist  # noqa: E402
+
+
+@admin.register(TaxonomyChecklist)
+class TaxonomyChecklistAdmin(admin.ModelAdmin):
+    list_display = ('title', 'version', 'is_published', 'released_at', 'contact')
+    list_filter = ('is_published',)
+    search_fields = ('title', 'version', 'description')
+    filter_horizontal = ('creators',)
+    raw_id_fields = ('contact',)
+    readonly_fields = ('released_at',)
+    fieldsets = (
+        (None, {
+            'fields': ('title', 'version', 'description', 'license', 'citation'),
+        }),
+        ('Publication', {
+            'fields': ('doi', 'released_at', 'is_published'),
+        }),
+        ('Attribution', {
+            'fields': ('contact', 'creators'),
+        }),
+    )
+
+
+# ---------------------------------------------------------------------------
+# ChecklistVersion admin
+# ---------------------------------------------------------------------------
+
+from bims.models.checklist_version import ChecklistVersion, ChecklistSnapshot  # noqa: E402
+
+
+class ChecklistSnapshotInline(TabularInlinePaginated):
+    model = ChecklistSnapshot
+    extra = 0
+    can_delete = False
+    max_num = 0
+    per_page = 25
+    show_change_link = False
+    fields = ('checklist_id', 'scientific_name', 'rank', 'taxonomic_status', 'change_type')
+    readonly_fields = fields
+    ordering = ('scientific_name',)
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(ChecklistVersion)
+class ChecklistVersionAdmin(admin.ModelAdmin):
+    list_display = (
+        'version',
+        'taxon_group',
+        'status',
+        'taxa_count',
+        'additions_count',
+        'updates_count',
+        'published_at',
+        'published_by',
+        'doi',
+    )
+    list_filter = ('status', 'taxon_group')
+    search_fields = ('version', 'doi', 'notes')
+    readonly_fields = (
+        'id',
+        'status',
+        'taxa_count',
+        'additions_count',
+        'updates_count',
+        'published_at',
+        'published_by',
+        'created_at',
+        'changelog_summary_display',
+    )
+    raw_id_fields = ('created_by',)
+    autocomplete_fields = ('taxon_group_search',) if False else ()
+    inlines = [ChecklistSnapshotInline]
+    actions = ['publish_versions']
+
+    fieldsets = (
+        ('Identity', {
+            'fields': ('id', 'taxon_group', 'checklist', 'version', 'previous_version'),
+        }),
+        ('Publication', {
+            'fields': ('status', 'doi', 'dataset_key', 'license', 'notes'),
+        }),
+        ('Snapshot counters', {
+            'fields': (
+                'taxa_count', 'additions_count', 'updates_count',
+                'changelog_summary_display',
+            ),
+            'classes': ('collapse',),
+        }),
+        ('Attribution', {
+            'fields': ('created_by', 'published_by', 'created_at', 'published_at'),
+        }),
+    )
+
+    def changelog_summary_display(self, obj):
+        s = obj.changelog_summary
+        return format_html(
+            '<strong>{}</strong> additions, <strong>{}</strong> updates '
+            '(<strong>{}</strong> total changes)',
+            s['additions'], s['updates'], s['total'],
+        )
+    changelog_summary_display.short_description = 'Changelog summary'
+
+    # ------------------------------------------------------------------
+    # Custom change-view: inject "Publish" and "Collect proposals" buttons
+    # ------------------------------------------------------------------
+
+    def change_view(self, request, object_id, form_url='', extra_context=None):
+        extra_context = extra_context or {}
+        obj = self.get_object(request, object_id)
+        if obj:
+            extra_context['can_publish'] = (
+                obj.status == ChecklistVersion.STATUS_DRAFT
+                and request.user.is_superuser
+            )
+            extra_context['is_published'] = obj.status == ChecklistVersion.STATUS_PUBLISHED
+        return super().change_view(
+            request, object_id, form_url, extra_context=extra_context
+        )
+
+    def response_change(self, request, obj):
+        if '_publish' in request.POST:
+            if obj.status == ChecklistVersion.STATUS_PUBLISHED:
+                self.message_user(request, 'This version is already published.', messages.WARNING)
+            else:
+                publish_versions_task.delay(
+                    str(connection.schema_name),
+                    [str(obj.pk)],
+                    request.user.id if request.user.is_authenticated else None,
+                )
+                self.message_user(
+                    request,
+                    f'Version {obj.version} queued for publishing.',
+                    messages.SUCCESS,
+                )
+            return HttpResponseRedirect(request.path)
+
+        return super().response_change(request, obj)
+
+    def publish_versions(self, request, queryset):
+        version_ids = [
+            str(version_id) for version_id in queryset.values_list('pk', flat=True)
+        ]
+        if version_ids:
+            publish_versions_task.delay(
+                str(connection.schema_name),
+                version_ids,
+                request.user.id if request.user.is_authenticated else None,
+            )
+            self.message_user(
+                request,
+                f'Queued {len(version_ids)} version(s) for publishing.',
+                messages.SUCCESS,
+            )
+        else:
+            self.message_user(
+                request,
+                'No versions were selected for publishing.',
+                messages.WARNING,
+            )
+    publish_versions.short_description = 'Publish selected draft versions'
+
+    def get_deleted_objects(self, objs, request):
+        deleted_objects, model_count, perms_needed, protected = (
+            admin_get_deleted_objects(objs, request, self.admin_site)
+        )
+        snapshot_verbose_name = ChecklistSnapshot._meta.verbose_name
+        snapshot_verbose_name_plural = (
+            ChecklistSnapshot._meta.verbose_name_plural
+        )
+
+        def strip_snapshot_rows(items):
+            cleaned = []
+            removed = 0
+            for item in items:
+                if isinstance(item, list):
+                    nested_items, nested_removed = strip_snapshot_rows(item)
+                    removed += nested_removed
+                    if nested_items:
+                        cleaned.append(nested_items)
+                    continue
+
+                label = str(item)
+                if (
+                    snapshot_verbose_name in label or
+                    snapshot_verbose_name_plural in label
+                ):
+                    removed += 1
+                    continue
+                cleaned.append(item)
+            return cleaned, removed
+
+        deleted_objects, removed_snapshot_rows = strip_snapshot_rows(
+            deleted_objects
+        )
+        if removed_snapshot_rows:
+            deleted_objects.append(
+                f'{removed_snapshot_rows} {snapshot_verbose_name_plural} '
+                '(hidden from preview)'
+            )
+
+        return deleted_objects, model_count, perms_needed, protected
+
+    change_form_template = 'admin/bims/checklistversion/change_form.html'
+
+
+@admin.register(ChecklistSnapshot)
+class ChecklistSnapshotAdmin(admin.ModelAdmin):
+    list_display = (
+        'scientific_name', 'rank', 'taxonomic_status',
+        'change_type', 'checklist_version',
+    )
+    list_filter = ('change_type', 'checklist_version__taxon_group', 'rank')
+    search_fields = ('scientific_name', 'checklist_id', 'authorship')
+    raw_id_fields = ('checklist_version',)
+    readonly_fields = (
+        'checklist_version', 'checklist_id', 'parent_checklist_id', 'basionym_checklist_id',
+        'rank', 'scientific_name', 'authorship', 'taxonomic_status',
+        'name_status', 'kingdom', 'phylum', 'klass', 'order', 'family',
+        'genus', 'vernacular_names', 'distributions', 'reference_id',
+        'remarks', 'change_type',
+    )
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False

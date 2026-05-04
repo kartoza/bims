@@ -470,6 +470,9 @@ class AddNewTaxon(LoginRequiredMixin, APIView):
                     'last_modified_by',
                     'origin',
                     'endemism',
+                    # Taxonomy-only fields not present on TaxonomyUpdateProposal
+                    'checklist_version_uuid',
+                    'last_checklist_published_uuid',
                 ]
             )
             proposal_author = author_name or taxonomy.author
