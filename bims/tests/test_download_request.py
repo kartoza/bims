@@ -10,7 +10,11 @@ from unittest import mock
 from django.test import TestCase, override_settings
 from django.utils import timezone
 
-from bims.models.download_request import DownloadRequest, params_from_dashboard_url
+from bims.models.download_request import (
+    DownloadRequest,
+    normalize_download_params,
+    params_from_dashboard_url,
+)
 from bims.tests.model_factories import UserF
 
 FAKE_MEDIA = '/tmp/test_media'
@@ -106,6 +110,17 @@ class TestParamsFromDashboardUrl(TestCase):
 
         self.assertIn('unknown', path)
         self.assertIsNotNone(params)
+
+    def test_duplicate_params_use_last_value(self):
+        params = normalize_download_params({
+            'modules': ['21', '22', '37'],
+            'rank': ['', 'GENUS'],
+            'taxon': [''],
+        })
+
+        self.assertEqual(params['modules'], '37')
+        self.assertEqual(params['rank'], 'GENUS')
+        self.assertEqual(params['taxon'], '')
 
 
 # ---------------------------------------------------------------------------
