@@ -1,7 +1,9 @@
 from django.urls import re_path, path
 
 from bims.api_views.coldp import ColDPMetadataView, ColDPTaxonView, ColDPSnapshotView
-from bims.api_views.checklist_version import ChecklistVersionListView, ChecklistVersionDetailView
+from bims.api_views.checklist_version import (
+    ChecklistVersionListView, ChecklistVersionDetailView, ChecklistVersionPublishView,
+)
 from bims.api_views.checklist import DownloadChecklistAPIView
 from bims.api_views.clear_cache import ClearCacheView
 from bims.api_views.geocontext import (
@@ -539,5 +541,10 @@ urlpatterns = [
         'checklist-version/<uuid:pk>/',
         ChecklistVersionDetailView.as_view(),
         name='checklist-version-detail',
+    ),
+    path(
+        'checklist-version/<uuid:pk>/publish/',
+        ChecklistVersionPublishView.as_view(),
+        name='checklist-version-publish',
     ),
 ]
