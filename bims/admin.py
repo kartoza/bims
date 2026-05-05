@@ -3412,7 +3412,11 @@ class ChecklistVersionAdmin(admin.ModelAdmin):
                     f'Version {obj.version} queued for publishing.',
                     messages.SUCCESS,
                 )
-            return HttpResponseRedirect(request.path)
+            change_url = reverse(
+                'admin:bims_checklistversion_change',
+                args=[obj.pk],
+            )
+            return HttpResponseRedirect(change_url)
 
         return super().response_change(request, obj)
 
