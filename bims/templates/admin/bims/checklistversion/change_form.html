@@ -1,0 +1,35 @@
+{% extends "admin/change_form.html" %}
+{% load i18n %}
+
+{% block submit_buttons_bottom %}
+  {{ block.super }}
+
+  {% if can_publish %}
+  <div class="submit-row" style="margin-top: 8px;">
+    <p style="color: #666; margin-bottom: 6px;">
+      <strong>{% trans "Ready to publish?" %}</strong>
+      {% if pending_proposals_count %}
+        {{ pending_proposals_count }} pending approved proposal(s) not yet added to this version.
+        Use <em>Collect pending proposals</em> first, or publish as-is.
+      {% else %}
+        All pending proposals have been collected.
+      {% endif %}
+    </p>
+    <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+      <input type="submit" name="_publish" value="{% trans 'Publish this version' %}"
+             class="default"
+             style="background: #28a745;"
+             onclick="return confirm('Publish this version? This action cannot be undone. A snapshot of all module taxa will be created.');"
+             title="Snapshot all module taxa and mark this version as published.">
+    </div>
+  </div>
+  {% endif %}
+
+  {% if is_published %}
+  <div class="submit-row" style="margin-top: 8px;">
+    <p style="color: #28a745; font-weight: bold;">
+      &#10003; {% trans "This version has been published and is read-only." %}
+    </p>
+  </div>
+  {% endif %}
+{% endblock %}

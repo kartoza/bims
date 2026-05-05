@@ -303,6 +303,8 @@ class AbstractTaxonomy(AbstractValidation):
     class Meta:
         abstract = True
 
+
+
     @property
     def data_name(self):
         return self.canonical_name
@@ -704,6 +706,24 @@ class Taxonomy(AbstractTaxonomy):
         ORIGIN_CATEGORIES['non-native: invasive']: 'Non-native: invasive',
         ORIGIN_CATEGORIES['non-native: non-invasive']: 'Non-native: non-invasive'
     }
+
+    checklist_version_uuid = models.UUIDField(
+        null=True,
+        blank=True,
+        help_text=(
+            'UUID of the ChecklistVersion in which this taxon first appeared '
+            'in a published ColDP release.'
+        ),
+    )
+
+    last_checklist_published_uuid = models.UUIDField(
+        null=True,
+        blank=True,
+        help_text=(
+            'UUID of the most recent published ChecklistVersion that included '
+            'a change (addition or update) to this taxon.'
+        ),
+    )
 
     def save_json_data(self, json_field):
         max_allowed = 10

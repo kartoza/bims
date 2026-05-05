@@ -9,6 +9,7 @@ from rest_framework.views import APIView
 
 from preferences import preferences
 
+from bims.models.checklist_version import ChecklistSnapshot, ChecklistVersion
 from bims.models.data_source import DataSource
 from bims.models.taxonomy import Taxonomy
 from bims.models.taxonomy_checklist import TaxonomyChecklist
@@ -359,3 +360,178 @@ class ColDPTaxonView(APIView):
             page, many=True, context={'site_prefix': site_prefix}
         )
         return self.paginator.get_paginated_response(serializer.data)
+
+
+class ColDPSnapshotView(APIView):
+    """
+    Paginated ColDP NameUsage list from a published ChecklistSnapshot.
+
+    Serves pre-rendered snapshot rows for a specific ChecklistVersion UUID.
+    Supports filtering by ``rank``, ``change_type``, and free-text ``q`` search.
+    """
+
+    pagination_class = ColDPTaxonPagination
+
+    @property
+    def paginator(self):
+        if not hasattr(self, '_paginator'):
+            self._paginator = self.pagination_class()
+        return self._paginator
+
+    @swagger_auto_schema(
+        operation_id='coldp_snapshot_taxon',
+        operation_summary='ColDP NameUsage snapshot for a checklist version',
+        operation_description=(
+            'Returns a paginated list of pre-rendered ColDP NameUsage rows '
+            'from the materialized **ChecklistSnapshot** for the given '
+            'ChecklistVersion UUID.\n\n'
+            'Only published versions are accessible. Snapshot rows are written '
+            'once at publish time and never modified, so this endpoint is '
+            'suitable for stable, reproducible exports.'
+        ),
+        manual_parameters=[
+            openapi.Parameter(
+                'rank', openapi.IN_QUERY,
+                description='Filter by taxonomic rank (e.g. SPECIES, GENUS).',
+                type=openapi.TYPE_STRING, required=False,
+            ),
+            openapi.Parameter(
+                'change_type', openapi.IN_QUERY,
+                description=(
+                    'Filter by change type relative to the previous version: '
+                    '``added``, ``updated``, or ``unchanged``.'
+                ),
+                type=openapi.TYPE_STRING,
+                enum=['added', 'updated', 'unchanged'],
+                required=False,
+            ),
+            openapi.Parameter(
+                'q', openapi.IN_QUERY,
+                description='Case-insensitive substring search on scientific_name.',
+                type=openapi.TYPE_STRING, required=False,
+            ),
+            openapi.Parameter(
+                'page_size', openapi.IN_QUERY,
+                description='Results per page (default 100, max 1000).',
+                type=openapi.TYPE_INTEGER, required=False,
+            ),
+        ],
+        responses={
+            200: openapi.Response(
+                description='Paginated ColDP NameUsage snapshot rows.',
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        'count': openapi.Schema(type=openapi.TYPE_INTEGER),
+                        'next': openapi.Schema(
+                            type=openapi.TYPE_STRING, format='uri', x_nullable=True),
+                        'previous': openapi.Schema(
+                            type=openapi.TYPE_STRING, format='uri', x_nullable=True),
+                        'version': openapi.Schema(
+                            type=openapi.TYPE_STRING,
+                            description='Human-readable version string of the checklist.',
+                        ),
+                        'checklist_version_id': openapi.Schema(
+                            type=openapi.TYPE_STRING, format='uuid',
+                        ),
+                        'results': openapi.Schema(
+                            type=openapi.TYPE_ARRAY,
+                            items=openapi.Schema(
+                                type=openapi.TYPE_OBJECT,
+                                properties={
+                                    'taxonID':         openapi.Schema(type=openapi.TYPE_STRING),
+                                    'parentID':        openapi.Schema(type=openapi.TYPE_STRING),
+                                    'basionymID':      openapi.Schema(type=openapi.TYPE_STRING),
+                                    'rank':            openapi.Schema(type=openapi.TYPE_STRING),
+                                    'scientificName':  openapi.Schema(type=openapi.TYPE_STRING),
+                                    'authorship':      openapi.Schema(type=openapi.TYPE_STRING),
+                                    'status':          openapi.Schema(type=openapi.TYPE_STRING),
+                                    'nameStatus':      openapi.Schema(type=openapi.TYPE_STRING),
+                                    'kingdom':         openapi.Schema(type=openapi.TYPE_STRING),
+                                    'phylum':          openapi.Schema(type=openapi.TYPE_STRING),
+                                    'class':           openapi.Schema(type=openapi.TYPE_STRING),
+                                    'order':           openapi.Schema(type=openapi.TYPE_STRING),
+                                    'family':          openapi.Schema(type=openapi.TYPE_STRING),
+                                    'genus':           openapi.Schema(type=openapi.TYPE_STRING),
+                                    'vernacularNames': openapi.Schema(type=openapi.TYPE_ARRAY,
+                                        items=openapi.Schema(type=openapi.TYPE_OBJECT)),
+                                    'distributions':   openapi.Schema(type=openapi.TYPE_ARRAY,
+                                        items=openapi.Schema(type=openapi.TYPE_OBJECT)),
+                                    'referenceID':     openapi.Schema(type=openapi.TYPE_STRING),
+                                    'remarks':         openapi.Schema(type=openapi.TYPE_STRING),
+                                    'changeType':      openapi.Schema(type=openapi.TYPE_STRING),
+                                },
+                            ),
+                        ),
+                    },
+                ),
+            ),
+            404: openapi.Response(description='ChecklistVersion not found or not published.'),
+        },
+        tags=['ColDP'],
+    )
+    def get(self, request, checklist_uuid):
+        try:
+            version = ChecklistVersion.objects.get(
+                pk=checklist_uuid,
+                status=ChecklistVersion.STATUS_PUBLISHED,
+            )
+        except ChecklistVersion.DoesNotExist:
+            return Response(
+                {'detail': 'Checklist version not found or not published.'},
+                status=404,
+            )
+
+        qs = (
+            ChecklistSnapshot.objects
+            .filter(checklist_version=version)
+            .order_by('scientific_name', 'checklist_id')
+        )
+
+        rank = request.query_params.get('rank', '').strip().upper()
+        if rank:
+            qs = qs.filter(rank=rank)
+
+        change_type = request.query_params.get('change_type', '').strip().lower()
+        if change_type in (
+            ChecklistSnapshot.CHANGE_ADDED,
+            ChecklistSnapshot.CHANGE_UPDATED,
+            ChecklistSnapshot.CHANGE_UNCHANGED,
+        ):
+            qs = qs.filter(change_type=change_type)
+
+        q = request.query_params.get('q', '').strip()
+        if q:
+            qs = qs.filter(scientific_name__icontains=q)
+
+        page = self.paginator.paginate_queryset(qs, request, view=self)
+        results = [_snapshot_to_coldp(row) for row in page]
+        response = self.paginator.get_paginated_response(results)
+        response.data['version'] = version.version
+        response.data['checklist_version_id'] = str(version.pk)
+        return response
+
+
+def _snapshot_to_coldp(row: ChecklistSnapshot) -> dict:
+    """Serialize a ChecklistSnapshot row to the ColDP NameUsage dict."""
+    return {
+        'taxonID':         row.checklist_id,
+        'parentID':        row.parent_checklist_id,
+        'basionymID':      row.basionym_checklist_id,
+        'rank':            row.rank,
+        'scientificName':  row.scientific_name,
+        'authorship':      row.authorship,
+        'status':          row.taxonomic_status,
+        'nameStatus':      row.name_status,
+        'kingdom':         row.kingdom,
+        'phylum':          row.phylum,
+        'class':           row.klass,
+        'order':           row.order,
+        'family':          row.family,
+        'genus':           row.genus,
+        'vernacularNames': row.vernacular_names,
+        'distributions':   row.distributions,
+        'referenceID':     row.reference_id,
+        'remarks':         row.remarks,
+        'changeType':      row.change_type,
+    }

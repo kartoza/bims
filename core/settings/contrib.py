@@ -405,6 +405,7 @@ CELERY_TASK_PROTOCOL = 1
 BIMS_API_SCHEMA_INCLUDE = [
     '/api/taxa-list/',
     '/api/coldp/',
+    '/api/checklist-version/',
 ]
 
 REST_FRAMEWORK = {

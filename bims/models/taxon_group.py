@@ -152,6 +152,15 @@ class TaxonGroup(models.Model):
         )
     )
 
+    col_enabled = models.BooleanField(
+        default=False,
+        help_text=(
+            'Enable ColDP / ChecklistBank publishing for this module. '
+            'Only modules with this flag set are listed in the public '
+            'checklist API and included in external COL feeds.'
+        ),
+    )
+
     class Meta:
         ordering = ('display_order',)
         permissions = (
