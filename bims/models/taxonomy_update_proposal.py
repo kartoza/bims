@@ -163,20 +163,6 @@ class TaxonomyUpdateProposal(AbstractTaxonomy):
 
     updated_at = models.DateTimeField(auto_now=True)
 
-    # Set when this proposal is captured into a published ChecklistVersion.
-    # Null means the proposal has been approved but not yet released.
-    captured_in_version = models.ForeignKey(
-        'bims.ChecklistVersion',
-        null=True,
-        blank=True,
-        on_delete=models.SET_NULL,
-        related_name='captured_proposals',
-        help_text=(
-            'The first ChecklistVersion in which this approved proposal '
-            'was included. Null = approved but not yet in any release.'
-        ),
-    )
-
     @property
     def last_modified(self):
         return self.updated_at or None
