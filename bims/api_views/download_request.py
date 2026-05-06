@@ -3,6 +3,7 @@ import os
 import zipfile
 from datetime import datetime, timedelta
 
+from django.core.exceptions import SuspiciousFileOperation
 from django.contrib.sites.models import Site
 from django.http import FileResponse
 from django.utils import timezone
@@ -24,6 +25,7 @@ from bims.models.download_request import (
     DownloadRequest,
     DownloadRequestPurpose
 )
+from bims.utils.filepath import ensure_within_dir
 
 
 class DownloadRequestApi(APIView):
@@ -313,20 +315,19 @@ class DownloadRequestFileApi(APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
 
-        file_path = dr.request_file.path
-        if not os.path.exists(file_path):
+        if not dr.request_file.storage.exists(dr.request_file.name):
             return Response(
                 {'error': 'File not found on server'},
                 status=status.HTTP_404_NOT_FOUND
             )
 
-        file_name = dr.request_category or os.path.basename(file_path)
+        file_name = dr.request_category or os.path.basename(dr.request_file.name)
 
-        ext = os.path.splitext(file_path)[1].lstrip('.')
+        ext = os.path.splitext(dr.request_file.name)[1].lstrip('.')
         if ext == 'zip' or dr.resource_type == DownloadRequest.ZIP:
             download_name = file_name if file_name.lower().endswith('.zip') else f'{file_name}.zip'
             return FileResponse(
-                open(file_path, 'rb'),
+                dr.request_file.open('rb'),
                 content_type='application/zip',
                 as_attachment=True,
                 filename=download_name,
@@ -342,15 +343,21 @@ class DownloadRequestFileApi(APIView):
 
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
-            zf.write(file_path, f'{file_name}.{ext}')
+            with dr.request_file.open('rb') as request_file_handle:
+                zf.writestr(f'{file_name}.{ext}', request_file_handle.read())
             readme = preferences.SiteSetting.readme_download
             if readme:
                 try:
-                    zf.write(
+                    safe_readme_path = ensure_within_dir(
                         readme.path,
-                        os.path.basename(readme.path)
+                        readme.storage.location,
                     )
-                except (FileNotFoundError, ValueError):
+                    with open(safe_readme_path, 'rb') as readme_handle:
+                        zf.writestr(
+                            os.path.basename(readme.name),
+                            readme_handle.read(),
+                        )
+                except (FileNotFoundError, SuspiciousFileOperation, ValueError):
                     pass
         buf.seek(0)
 

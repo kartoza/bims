@@ -247,6 +247,28 @@ class TestDownloadRequestZipFileApi(FastTenantTestCase):
             response['Content-Disposition']
         )
 
+    def test_legacy_download_path_outside_media_root_is_rejected(self):
+        with override_settings(MEDIA_ROOT=self.media_root):
+            self.client.force_login(self.user)
+            download_request = DownloadRequest.objects.create(
+                requester=self.user,
+                resource_type=DownloadRequest.ZIP,
+                resource_name='Checklist ZIP',
+                approved=True,
+                processing=False,
+                download_path='/tmp/outside-checklist-export.zip',
+            )
+
+            response = self.client.get(
+                reverse(
+                    'checklist-version-export',
+                    args=[uuid.uuid4()],
+                ),
+                {'download_request_id': download_request.id},
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
 
 class TestChecklistVersionPublishAPI(FastTenantTestCase):
 

@@ -1,5 +1,6 @@
 import os
 import csv
+import io
 import zipfile
 
 from celery import shared_task
@@ -7,6 +8,7 @@ from django.db import DatabaseError, connection, OperationalError, connections
 from openpyxl import load_workbook
 
 from bims.utils.domain import get_current_domain
+from bims.utils.filepath import ensure_within_dir, sanitize_path_component
 
 
 @shared_task(name='bims.tasks.email_csv', queue='search')
@@ -27,6 +29,7 @@ def send_csv_via_email(
     """
     from preferences import preferences
     from django.template.loader import render_to_string
+    from django.core.exceptions import SuspiciousFileOperation
     from django.core.mail import EmailMultiAlternatives
     from django.contrib.auth import get_user_model
     from django.conf import settings
@@ -115,23 +118,67 @@ def send_csv_via_email(
         settings.DEFAULT_FROM_EMAIL,
         [user.email])
     if direct_attachment:
-        msg.attach_file(download_file_path, 'application/zip')
+        if download_request and download_request.request_file:
+            with download_request.request_file.open('rb') as attachment_handle:
+                attachment_name = (
+                    os.path.basename(download_request.request_file.name) or
+                    '{}.zip'.format(sanitize_path_component(file_name, 'download'))
+                )
+                msg.attach(
+                    attachment_name,
+                    attachment_handle.read(),
+                    'application/zip'
+                )
+        else:
+            try:
+                safe_download_path = ensure_within_dir(
+                    download_file_path,
+                    settings.MEDIA_ROOT,
+                )
+            except SuspiciousFileOperation:
+                return False
+            with open(safe_download_path, 'rb') as attachment_handle:
+                msg.attach(
+                    '{}.zip'.format(sanitize_path_component(file_name, 'download')),
+                    attachment_handle.read(),
+                    'application/zip'
+                )
     else:
-        zip_folder = os.path.join(
-            settings.MEDIA_ROOT, settings.PROCESSED_CSV_PATH, user.username)
-        if not os.path.exists(zip_folder):
-            os.makedirs(zip_folder)
-        zip_file = os.path.join(zip_folder, '{}.zip'.format(file_name))
-        with zipfile.ZipFile(zip_file, 'w', zipfile.ZIP_DEFLATED) as zf:
-            zf.write(download_file_path, f'{file_name}.{extension}')
+        archive_label = sanitize_path_component(file_name, 'download')
+        zip_buffer = io.BytesIO()
+        try:
+            safe_download_path = ensure_within_dir(
+                download_file_path,
+                settings.MEDIA_ROOT,
+            )
+        except SuspiciousFileOperation:
+            return False
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+            with open(safe_download_path, 'rb') as download_handle:
+                zf.writestr(
+                    f'{archive_label}.{extension}',
+                    download_handle.read()
+                )
             if preferences.SiteSetting.readme_download:
                 readme_path = preferences.SiteSetting.readme_download.path
-                if os.path.exists(readme_path):
-                    zf.write(
+                try:
+                    safe_readme_path = ensure_within_dir(
                         readme_path,
-                        os.path.basename(readme_path)
+                        preferences.SiteSetting.readme_download.storage.location,
                     )
-        msg.attach_file(zip_file, 'application/octet-stream')
+                except SuspiciousFileOperation:
+                    safe_readme_path = None
+                if safe_readme_path and os.path.exists(safe_readme_path):
+                    with open(safe_readme_path, 'rb') as readme_handle:
+                        zf.writestr(
+                            os.path.basename(safe_readme_path),
+                            readme_handle.read()
+                        )
+        msg.attach(
+            '{}.zip'.format(archive_label),
+            zip_buffer.getvalue(),
+            'application/octet-stream'
+        )
     msg.content_subtype = 'html'
     msg.send()
 

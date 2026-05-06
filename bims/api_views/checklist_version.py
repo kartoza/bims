@@ -1,6 +1,8 @@
 # coding=utf-8
 import os
 
+from django.conf import settings
+from django.core.exceptions import SuspiciousFileOperation
 from django.db import connection
 from django.http import FileResponse
 from drf_yasg import openapi
@@ -14,6 +16,7 @@ from rest_framework.views import APIView
 from bims.models.checklist_version import ChecklistVersion
 from bims.models.download_request import DownloadRequest
 from bims.models.taxon_group import TaxonGroup
+from bims.utils.filepath import ensure_within_dir
 
 
 class ChecklistVersionSerializer(serializers.ModelSerializer):
@@ -414,19 +417,24 @@ class ChecklistVersionExportView(APIView):
 
         if dr.request_file:
             return FileResponse(
-                open(dr.request_file.path, 'rb'),
+                dr.request_file.open('rb'),
                 content_type='application/zip',
                 as_attachment=True,
-                filename=dr.request_category or os.path.basename(dr.request_file.path),
+                filename=dr.request_category or os.path.basename(dr.request_file.name),
             )
 
         file_path = dr.download_path
         if not file_path or not os.path.exists(file_path):
             return Response({'detail': 'Export file not found.'}, status=404)
 
+        try:
+            safe_file_path = ensure_within_dir(file_path, settings.MEDIA_ROOT)
+        except SuspiciousFileOperation:
+            return Response({'detail': 'Export file not found.'}, status=404)
+
         filename = dr.request_category or os.path.basename(file_path)
         response = FileResponse(
-            open(file_path, 'rb'),
+            open(safe_file_path, 'rb'),
             content_type='application/zip',
         )
         response['Content-Disposition'] = f'attachment; filename="{filename}"'
