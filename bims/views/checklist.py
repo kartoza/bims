@@ -19,5 +19,13 @@ class ChecklistView(LoginRequiredMixin, TemplateView):
             ).order_by('display_order').values('id', 'name')
         )
         ctx['licences'] = list(Licence.objects.values('id', 'identifier', 'name'))
-        ctx['can_publish'] = self.request.user.is_superuser
+        publish_group_ids = list(
+            TaxonGroup.objects.filter(
+                category=TaxonomicGroupCategory.SPECIES_MODULE.name,
+                experts=self.request.user
+            ).values_list('id', flat=True)
+        )
+        ctx['publish_group_ids'] = publish_group_ids
+        ctx['can_publish'] = self.request.user.is_superuser or bool(publish_group_ids)
+        ctx['can_create_version'] = self.request.user.is_superuser
         return ctx

@@ -37,6 +37,7 @@ def send_csv_via_email(
     download_request = None
     extension = 'csv'
     download_file_path = csv_file
+    direct_attachment = False
 
     if download_request_id:
         try:
@@ -87,6 +88,10 @@ def send_csv_via_email(
         extension = 'xlsx'
         download_file_path = excel_file_path
         email_template = 'excel_download/excel_created'
+    if download_request and download_request.resource_type == DownloadRequest.ZIP:
+        email_template = 'zip_download/zip_created'
+        extension = 'zip'
+        direct_attachment = True
 
     if not approved and approved is not None:
         return False
@@ -109,21 +114,24 @@ def send_csv_via_email(
         message,
         settings.DEFAULT_FROM_EMAIL,
         [user.email])
-    zip_folder = os.path.join(
-        settings.MEDIA_ROOT, settings.PROCESSED_CSV_PATH, user.username)
-    if not os.path.exists(zip_folder):
-        os.makedirs(zip_folder)
-    zip_file = os.path.join(zip_folder, '{}.zip'.format(file_name))
-    with zipfile.ZipFile(zip_file, 'w', zipfile.ZIP_DEFLATED) as zf:
-        zf.write(download_file_path, f'{file_name}.{extension}')
-        if preferences.SiteSetting.readme_download:
-            readme_path = preferences.SiteSetting.readme_download.path
-            if os.path.exists(readme_path):
-                zf.write(
-                    readme_path,
-                    os.path.basename(readme_path)
-                )
-    msg.attach_file(zip_file, 'application/octet-stream')
+    if direct_attachment:
+        msg.attach_file(download_file_path, 'application/zip')
+    else:
+        zip_folder = os.path.join(
+            settings.MEDIA_ROOT, settings.PROCESSED_CSV_PATH, user.username)
+        if not os.path.exists(zip_folder):
+            os.makedirs(zip_folder)
+        zip_file = os.path.join(zip_folder, '{}.zip'.format(file_name))
+        with zipfile.ZipFile(zip_file, 'w', zipfile.ZIP_DEFLATED) as zf:
+            zf.write(download_file_path, f'{file_name}.{extension}')
+            if preferences.SiteSetting.readme_download:
+                readme_path = preferences.SiteSetting.readme_download.path
+                if os.path.exists(readme_path):
+                    zf.write(
+                        readme_path,
+                        os.path.basename(readme_path)
+                    )
+        msg.attach_file(zip_file, 'application/octet-stream')
     msg.content_subtype = 'html'
     msg.send()
 

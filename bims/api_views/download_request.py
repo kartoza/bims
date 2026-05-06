@@ -320,10 +320,18 @@ class DownloadRequestFileApi(APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
 
-        file_name = dr.request_category or os.path.splitext(
-            os.path.basename(file_path))[0]
+        file_name = dr.request_category or os.path.basename(file_path)
 
         ext = os.path.splitext(file_path)[1].lstrip('.')
+        if ext == 'zip' or dr.resource_type == DownloadRequest.ZIP:
+            download_name = file_name if file_name.lower().endswith('.zip') else f'{file_name}.zip'
+            return FileResponse(
+                open(file_path, 'rb'),
+                content_type='application/zip',
+                as_attachment=True,
+                filename=download_name,
+            )
+
         if not ext:
             if dr.resource_type == DownloadRequest.PDF:
                 ext = 'pdf'

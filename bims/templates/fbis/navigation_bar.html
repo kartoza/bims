@@ -133,6 +133,7 @@
                         {% if not user.is_superuser %}
                         <li class="dropdown-divider"></li>
                         <li class="dropdown-menu-item"><a href="/taxa-management/">Taxon Management</a></li>
+                        <li class="dropdown-menu-item"><a href="/checklist/">Checklist</a></li>
                         {% endif %}
                     </ul>
                 </li>
@@ -143,6 +144,7 @@
                         <ul class="dropdown-menu" style="width: 250px; z-index: 9999">
                             <li class="dropdown-menu-item"><a href="/source-references/">Source References</a></li>
                             <li class="dropdown-menu-item" ><a href="/taxa-management/">Taxon Management</a></li>
+                            <li class="dropdown-menu-item" ><a href="/checklist/">Checklist</a></li>
                             <li class="dropdown-menu-item" ><a href="/harvest-collections/">Harvest From GBIF</a></li>
                             <li class="dropdown-menu-item" ><a href="/harvest-species/">Harvest Species</a></li>
                             <li class="dropdown-menu-item" ><a href="/dashboard-management/">Edit Dashboard</a></li>
@@ -175,12 +177,14 @@
                         </a>
                         <ul class="dropdown-menu" style="width: 250px; z-index: 9999">
                             <li class="dropdown-menu-item" ><a href="/taxa-management/">Taxon Management</a></li>
+                            <li class="dropdown-menu-item" ><a href="/checklist/">Checklist</a></li>
                             <li class="dropdown-menu-item"><a href="/admin/">Admin Page</a></li>
                         </ul>
                     </li>
                 {% else %}
                     <ul class="dropdown-menu" style="width: 250px; z-index: 9999">>
                         <li class="dropdown-menu-item" ><a href="/taxa-management/">Taxon Management</a></li>
+                        <li class="dropdown-menu-item" ><a href="/checklist/">Checklist</a></li>
                     </ul>
                 {% endif %}
                 {% if preferences.SiteSetting.default_data_source == 'fbis' %}

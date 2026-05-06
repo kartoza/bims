@@ -113,6 +113,9 @@ def publish_versions_task(schema_name, version_ids, published_by_id=None):
                     version.pk,
                     schema_name,
                 )
+                # Clear the publishing flag so the UI doesn't stay stuck
+                version.is_publishing = False
+                version.save(update_fields=['is_publishing'])
 
         return {
             'status': 'completed',
@@ -124,3 +127,46 @@ def publish_versions_task(schema_name, version_ids, published_by_id=None):
             'missing': missing_count,
             'errors': errors,
         }
+
+
+@shared_task(
+    name='bims.tasks.delete_published_checklist_version',
+    queue='update',
+    ignore_result=True,
+)
+def delete_published_checklist_version_task(schema_name, version_id):
+    from bims.models.checklist_version import ChecklistVersion
+    from bims.models.download_request import DownloadRequest
+    from bims.models.taxonomy import Taxonomy
+
+    Tenant = get_tenant_model()
+    with schema_context(get_public_schema_name()):
+        if not Tenant.objects.filter(schema_name=schema_name).exists():
+            return
+
+    with schema_context(schema_name):
+        version = (
+            ChecklistVersion.objects
+            .select_related('taxon_group')
+            .filter(pk=version_id)
+            .first()
+        )
+        if not version:
+            return
+
+        Taxonomy.objects.filter(
+            checklist_version_uuid=version.pk
+        ).update(checklist_version_uuid=None)
+        Taxonomy.objects.filter(
+            last_checklist_published_uuid=version.pk
+        ).update(last_checklist_published_uuid=None)
+
+        related_downloads = DownloadRequest.objects.filter(
+            resource_name=f'Checklist ColDP ZIP {version.pk}'
+        )
+        for download_request in related_downloads:
+            if download_request.request_file:
+                download_request.request_file.delete(save=False)
+            download_request.delete()
+
+        version.delete()

@@ -1,4 +1,8 @@
 # coding=utf-8
+import os
+
+from django.db import connection
+from django.http import FileResponse
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import serializers
@@ -8,6 +12,8 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from bims.models.checklist_version import ChecklistVersion
+from bims.models.download_request import DownloadRequest
+from bims.models.taxon_group import TaxonGroup
 
 
 class ChecklistVersionSerializer(serializers.ModelSerializer):
@@ -31,6 +37,8 @@ class ChecklistVersionSerializer(serializers.ModelSerializer):
             'taxa_count',
             'additions_count',
             'updates_count',
+            'deletions_count',
+            'is_publishing',
             'created_at',
             'published_at',
             'published_by_name',
@@ -127,6 +135,16 @@ class ChecklistVersionListView(APIView):
     )
     def get(self, request):
         status_param = request.query_params.get('status', '')
+        taxon_group_id = request.query_params.get('taxon_group')
+        can_manage_group = False
+        if taxon_group_id and request.user.is_authenticated:
+            can_manage_group = (
+                request.user.is_superuser or
+                TaxonGroup.objects.filter(
+                    id=taxon_group_id,
+                    experts=request.user
+                ).exists()
+            )
 
         qs = (
             ChecklistVersion.objects
@@ -134,15 +152,12 @@ class ChecklistVersionListView(APIView):
             .order_by('-created_at')
         )
 
-        # Superusers see all statuses by default; others only see published
-        if request.user.is_superuser:
+        if request.user.is_superuser or can_manage_group:
             if status_param in (ChecklistVersion.STATUS_DRAFT, ChecklistVersion.STATUS_PUBLISHED):
                 qs = qs.filter(status=status_param)
-            # else: no filter → all statuses
         else:
             qs = qs.filter(status=ChecklistVersion.STATUS_PUBLISHED)
 
-        taxon_group_id = request.query_params.get('taxon_group')
         if taxon_group_id:
             qs = qs.filter(taxon_group_id=taxon_group_id)
 
@@ -231,19 +246,188 @@ class ChecklistVersionPublishView(APIView):
         tags=['Checklist'],
     )
     def post(self, request, pk):
-        if not request.user.is_superuser:
-            return Response({'detail': 'Superuser access required.'}, status=403)
-
         try:
             obj = ChecklistVersion.objects.select_related('taxon_group').get(pk=pk)
         except ChecklistVersion.DoesNotExist:
             return Response({'detail': 'Not found.'}, status=404)
 
+        can_publish = (
+            request.user.is_superuser or
+            obj.taxon_group.experts.filter(id=request.user.id).exists()
+        )
+        if not can_publish:
+            return Response(
+                {'detail': 'Admin or taxon group expert access required.'},
+                status=403
+            )
+
         if obj.status == ChecklistVersion.STATUS_PUBLISHED:
             return Response({'detail': 'Already published.'}, status=400)
 
-        obj.publish(published_by=request.user)
+        if obj.is_publishing:
+            return Response({'detail': 'Already publishing.'}, status=400)
+
+        # Mark as publishing immediately so the UI reflects it right away,
+        # then hand off to Celery so the endpoint returns without blocking.
+        obj.is_publishing = True
+        obj.save(update_fields=['is_publishing'])
+
+        from django.db import connection
+        from bims.tasks.checklist import publish_versions_task
+        publish_versions_task.delay(
+            schema_name=connection.schema_name,
+            version_ids=[str(obj.pk)],
+            published_by_id=request.user.pk,
+        )
+
         obj.refresh_from_db()
         return Response(
-            ChecklistVersionSerializer(obj, context={'request': request}).data
+            ChecklistVersionSerializer(obj, context={'request': request}).data,
+            status=202,
         )
+
+
+class ChecklistVersionDeleteView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        try:
+            obj = ChecklistVersion.objects.select_related('taxon_group').get(pk=pk)
+        except ChecklistVersion.DoesNotExist:
+            return Response({'detail': 'Not found.'}, status=404)
+
+        can_delete = (
+            request.user.is_superuser or
+            obj.taxon_group.experts.filter(id=request.user.id).exists()
+        )
+        if not can_delete:
+            return Response(
+                {'detail': 'Admin or taxon group expert access required.'},
+                status=403
+            )
+
+        if obj.status != ChecklistVersion.STATUS_PUBLISHED:
+            return Response(
+                {'detail': 'Only published checklist versions can be removed.'},
+                status=400
+            )
+
+        from bims.tasks.checklist import delete_published_checklist_version_task
+        delete_published_checklist_version_task.delay(
+            str(connection.schema_name),
+            str(obj.pk),
+        )
+        return Response({
+            'message': 'Checklist removal queued.'
+        }, status=202)
+
+
+class ChecklistVersionExportView(APIView):
+    """
+    POST /api/checklist-version/<uuid>/export/
+        Enqueue a ColDP ZIP export for a published ChecklistVersion.
+        Returns {download_request_id, status_url}.
+
+    GET /api/checklist-version/<uuid>/export/?download_request_id=<id>
+        Stream the completed ZIP file.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        try:
+            version = ChecklistVersion.objects.get(pk=pk)
+        except ChecklistVersion.DoesNotExist:
+            return Response({'detail': 'Not found.'}, status=404)
+
+        if version.status != ChecklistVersion.STATUS_PUBLISHED:
+            return Response({'detail': 'Only published versions can be exported.'}, status=400)
+
+        download_request_id = request.data.get('download_request_id')
+        if download_request_id:
+            try:
+                dr = DownloadRequest.objects.get(
+                    id=download_request_id,
+                    requester=request.user,
+                )
+            except DownloadRequest.DoesNotExist:
+                return Response({'detail': 'Download request not found.'}, status=404)
+
+            if dr.request_file:
+                return Response({
+                    'download_request_id': dr.id,
+                    'status_url': f'/api/download-request/{dr.id}/progress/',
+                    'download_url': f'/api/download-request/{dr.id}/file/',
+                })
+
+            if dr.processing and dr.progress:
+                return Response({
+                    'download_request_id': dr.id,
+                    'status_url': f'/api/download-request/{dr.id}/progress/',
+                    'download_url': f'/api/download-request/{dr.id}/file/',
+                }, status=202)
+
+            dr.processing = True
+            dr.resource_type = DownloadRequest.ZIP
+            dr.resource_name = f'Checklist ColDP ZIP {version.pk}'
+            dr.request_category = f'{version.taxon_group.name} {version.version}'
+            dr.approved = True
+            dr.save(update_fields=[
+                'processing',
+                'resource_type',
+                'resource_name',
+                'request_category',
+                'approved',
+            ])
+        else:
+            dr = DownloadRequest.objects.create(
+                requester=request.user,
+                resource_type=DownloadRequest.ZIP,
+                resource_name=f'Checklist ColDP ZIP {version.pk}',
+                request_category=f'{version.taxon_group.name} {version.version}',
+                approved=True,
+                processing=True,
+            )
+
+        from bims.tasks.coldp_export import export_coldp_zip
+        export_coldp_zip.delay(dr.id, str(version.pk))
+
+        return Response({
+            'download_request_id': dr.id,
+            'status_url': f'/api/download-request/{dr.id}/progress/',
+            'download_url': f'/api/download-request/{dr.id}/file/',
+        }, status=202)
+
+    def get(self, request, pk):
+        """Stream the ZIP once export is complete."""
+        dr_id = request.query_params.get('download_request_id')
+        if not dr_id:
+            return Response({'detail': 'download_request_id is required.'}, status=400)
+
+        try:
+            dr = DownloadRequest.objects.get(id=dr_id, requester=request.user)
+        except DownloadRequest.DoesNotExist:
+            return Response({'detail': 'Download request not found.'}, status=404)
+
+        if dr.processing:
+            return Response({'detail': 'Export still in progress.'}, status=202)
+
+        if dr.request_file:
+            return FileResponse(
+                open(dr.request_file.path, 'rb'),
+                content_type='application/zip',
+                as_attachment=True,
+                filename=dr.request_category or os.path.basename(dr.request_file.path),
+            )
+
+        file_path = dr.download_path
+        if not file_path or not os.path.exists(file_path):
+            return Response({'detail': 'Export file not found.'}, status=404)
+
+        filename = dr.request_category or os.path.basename(file_path)
+        response = FileResponse(
+            open(file_path, 'rb'),
+            content_type='application/zip',
+        )
+        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+        return response

@@ -9,7 +9,7 @@ from rest_framework import status
 
 from bims.models.checklist_version import ChecklistVersion, ChecklistSnapshot
 from bims.models.licence import Licence
-from bims.tests.model_factories import TaxonGroupF, TaxonomyF, UserF
+from bims.tests.model_factories import TaxonGroupF, TaxonomyF, UserF, TaxonGroupTaxonomyF
 
 
 def _licence():
@@ -43,7 +43,18 @@ class TestColDPSnapshotView(FastTenantTestCase):
 
         self.taxon1 = TaxonomyF.create(scientific_name='Labeo umbratus', rank='SPECIES')
         self.taxon2 = TaxonomyF.create(scientific_name='Labeo capensis', rank='SPECIES')
-        self.group.taxonomies.add(self.taxon1, self.taxon2)
+
+        TaxonGroupTaxonomyF.create(
+            taxongroup=self.group,
+            taxonomy=self.taxon1,
+            is_validated=True
+        )
+
+        TaxonGroupTaxonomyF.create(
+            taxongroup=self.group,
+            taxonomy=self.taxon2,
+            is_validated=True
+        )
 
         self.version = _make_published_version(self.group, version='1.0', user=self.user)
 
@@ -115,7 +126,11 @@ class TestColDPSnapshotView(FastTenantTestCase):
 
     def test_filter_by_rank(self):
         genus_taxon = TaxonomyF.create(scientific_name='Labeo', rank='GENUS')
-        self.group.taxonomies.add(genus_taxon)
+        TaxonGroupTaxonomyF.create(
+            taxongroup=self.group,
+            taxonomy=genus_taxon,
+            is_validated=True
+        )
         # republish to include new taxon
         v2 = _make_published_version(self.group, version='2.0', user=self.user)
 

@@ -1,13 +1,19 @@
 # coding=utf-8
 """Tests for the ChecklistVersion list/detail API endpoints."""
+import shutil
+import tempfile
 import uuid
+from unittest.mock import patch
 
+from django.core.files.base import ContentFile
 from django.urls import reverse
+from django.test import override_settings
 from django_tenants.test.cases import FastTenantTestCase
 from django_tenants.test.client import TenantClient
 from rest_framework import status
 
 from bims.models.checklist_version import ChecklistVersion
+from bims.models.download_request import DownloadRequest
 from bims.models.licence import Licence
 from bims.tests.model_factories import TaxonGroupF, UserF
 
@@ -38,10 +44,12 @@ class TestChecklistVersionListAPI(FastTenantTestCase):
     def setUp(self):
         self.client = TenantClient(self.tenant)
         self.user = UserF.create()
+        self.expert = UserF.create()
         self.superuser = UserF.create(is_superuser=True, is_staff=True)
         self.group = TaxonGroupF.create(name='Fish')
         self.other_group = TaxonGroupF.create(name='Frogs')
         self.url = reverse('checklist-version-list')
+        self.group.experts.add(self.expert)
 
         self.v1 = _make_version(self.group, version='1.0')
         self.v2 = _make_version(self.group, version='2.0')
@@ -95,6 +103,24 @@ class TestChecklistVersionListAPI(FastTenantTestCase):
         ids = [r['id'] for r in response.data['results']]
         self.assertIn(str(self.v_draft.pk), ids)
 
+    def test_group_expert_can_list_drafts_for_managed_group(self):
+        self.client.force_login(self.expert)
+        response = self.client.get(self.url, {
+            'status': 'draft',
+            'taxon_group': self.group.pk,
+        })
+        ids = [r['id'] for r in response.data['results']]
+        self.assertIn(str(self.v_draft.pk), ids)
+
+    def test_group_expert_cannot_list_drafts_for_other_group(self):
+        self.client.force_login(self.expert)
+        response = self.client.get(self.url, {
+            'status': 'draft',
+            'taxon_group': self.other_group.pk,
+        })
+        ids = [r['id'] for r in response.data['results']]
+        self.assertNotIn(str(self.v_draft.pk), ids)
+
     def test_page_size_respected(self):
         response = self.client.get(self.url, {'page_size': 1})
         self.assertEqual(len(response.data['results']), 1)
@@ -141,3 +167,138 @@ class TestChecklistVersionDetailAPI(FastTenantTestCase):
         v2 = _make_version(self.group, version='2.0', previous_version=self.version)
         response = self.client.get(self._url(v2.pk))
         self.assertEqual(str(response.data['previous_version']), str(self.version.pk))
+
+
+class TestChecklistVersionExportAPI(FastTenantTestCase):
+
+    def setUp(self):
+        self.client = TenantClient(self.tenant)
+        self.user = UserF.create()
+        self.group = TaxonGroupF.create(name='Fish')
+        self.version = _make_version(self.group, version='1.0')
+        self.url = reverse('checklist-version-export', args=[self.version.pk])
+
+    def test_export_uses_existing_download_request_and_queues_task(self):
+        self.client.force_login(self.user)
+        download_request = DownloadRequest.objects.create(
+            requester=self.user,
+            resource_type=DownloadRequest.ZIP,
+            resource_name='Checklist ZIP',
+            approved=True,
+            processing=True,
+        )
+
+        with patch('bims.tasks.coldp_export.export_coldp_zip.delay') as delay_mock:
+            response = self.client.post(
+                self.url,
+                {'download_request_id': download_request.id},
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+        self.assertEqual(response.data['download_request_id'], download_request.id)
+        self.assertIn(f'/api/download-request/{download_request.id}/progress/', response.data['status_url'])
+        self.assertIn(f'/api/download-request/{download_request.id}/file/', response.data['download_url'])
+        download_request.refresh_from_db()
+        self.assertTrue(download_request.processing)
+        self.assertEqual(download_request.resource_type, DownloadRequest.ZIP)
+        self.assertEqual(
+            download_request.request_category,
+            f'{self.group.name} {self.version.version}'
+        )
+        delay_mock.assert_called_once_with(download_request.id, str(self.version.pk))
+
+
+class TestDownloadRequestZipFileApi(FastTenantTestCase):
+
+    def setUp(self):
+        self.client = TenantClient(self.tenant)
+        self.user = UserF.create()
+        self.media_root = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.media_root, ignore_errors=True)
+        super().tearDown()
+
+    def test_zip_request_file_is_streamed_directly(self):
+        with override_settings(MEDIA_ROOT=self.media_root):
+            self.client.force_login(self.user)
+            download_request = DownloadRequest.objects.create(
+                requester=self.user,
+                resource_type=DownloadRequest.ZIP,
+                resource_name='Checklist ZIP',
+                approved=True,
+                processing=False,
+                request_category='checklist_export.zip',
+            )
+            download_request.request_file.save(
+                'checklist_export.zip',
+                ContentFile(b'PK\x03\x04dummy zip'),
+                save=True,
+            )
+
+            response = self.client.get(
+                reverse('download-request-file', args=[download_request.id])
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response['Content-Type'], 'application/zip')
+        self.assertIn(
+            'attachment; filename="checklist_export.zip"',
+            response['Content-Disposition']
+        )
+
+
+class TestChecklistVersionPublishAPI(FastTenantTestCase):
+
+    def setUp(self):
+        self.client = TenantClient(self.tenant)
+        self.expert = UserF.create()
+        self.other_user = UserF.create()
+        self.group = TaxonGroupF.create(name='Fish')
+        self.group.experts.add(self.expert)
+        self.version = _make_version(
+            self.group,
+            version='1.0-draft',
+            status=ChecklistVersion.STATUS_DRAFT,
+        )
+        self.url = reverse('checklist-version-publish', args=[self.version.pk])
+
+    def test_group_expert_can_publish_draft(self):
+        self.client.force_login(self.expert)
+        response = self.client.post(self.url)
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+        self.version.refresh_from_db()
+        self.assertEqual(self.version.status, ChecklistVersion.STATUS_PUBLISHED)
+
+    def test_non_expert_cannot_publish_draft(self):
+        self.client.force_login(self.other_user)
+        response = self.client.post(self.url)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+
+class TestChecklistVersionDeleteAPI(FastTenantTestCase):
+
+    def setUp(self):
+        self.client = TenantClient(self.tenant)
+        self.expert = UserF.create()
+        self.other_user = UserF.create()
+        self.group = TaxonGroupF.create(name='Fish')
+        self.group.experts.add(self.expert)
+        self.version = _make_version(
+            self.group,
+            version='1.0',
+            status=ChecklistVersion.STATUS_PUBLISHED,
+        )
+        self.url = reverse('checklist-version-delete', args=[self.version.pk])
+
+    def test_group_expert_can_queue_delete_for_published_version(self):
+        self.client.force_login(self.expert)
+        with patch('bims.tasks.checklist.delete_published_checklist_version_task.delay') as delay_mock:
+            response = self.client.post(self.url)
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+        delay_mock.assert_called_once()
+
+    def test_non_expert_cannot_queue_delete(self):
+        self.client.force_login(self.other_user)
+        response = self.client.post(self.url)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)

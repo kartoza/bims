@@ -9,8 +9,9 @@
     <script src="{% static 'js/libs/jquery/jquery-3.3.1.min.js' %}"></script>
     <script src="{% static "js/libs/bootstrap-4.0.0/js/bootstrap.min.js" %}"></script>
     <style>
-        .badge-draft     { background: #6c757d; color: #fff; }
-        .badge-published { background: #28a745; color: #fff; }
+        .badge-draft      { background: #6c757d; color: #fff; }
+        .badge-published  { background: #28a745; color: #fff; }
+        .badge-publishing { background: #fd7e14; color: #fff; }
         #version-loading { display: none; color: #666; padding: 8px 0; }
         #add-version-modal .btn-publish { background: #28a745; color: #fff; }
         #add-version-modal .btn-publish:hover { background: #218838; }
@@ -19,7 +20,15 @@
 {% endblock %}
 
 {% block body_content %}
-<div style="min-height: 100%; height: auto;">
+<div
+    id="checklist-page"
+    style="min-height: 100%; height: auto;"
+    data-csrf-token="{{ csrf_token }}"
+    data-can-publish="{{ can_publish|yesno:'true,false' }}"
+    data-is-superuser="{{ user.is_superuser|yesno:'true,false' }}"
+    data-publish-group-ids="{% for group_id in publish_group_ids %}{{ group_id }}{% if not forloop.last %},{% endif %}{% endfor %}"
+    data-api-base="/api/checklist-version/"
+>
 
     <div class="container-fluid header-wrapper">
         <div class="dashboard-title">
@@ -29,8 +38,6 @@
 
     <div class="container-fluid">
         <div class="row">
-
-            {# ── Sidebar filters ──────────────────────────────────────────── #}
             <div class="col-lg-2">
                 <h5 style="border-bottom: 1px solid #b1b1b1; padding-bottom: 10px;">
                     Filter by:
@@ -52,7 +59,7 @@
                 </select>
                 {% endif %}
 
-                {% if can_publish %}
+                {% if can_create_version %}
                 <div class="mt-4">
                     <button class="btn btn-primary btn-sm btn-block"
                             data-toggle="modal" data-target="#add-version-modal">
@@ -62,9 +69,7 @@
                 {% endif %}
             </div>
 
-            {# ── Main content ─────────────────────────────────────────────── #}
             <div class="col-lg-10">
-
                 <div id="version-loading">
                     <span class="spinner-border spinner-border-sm" role="status"></span>
                     Loading…
@@ -76,8 +81,7 @@
                             <th>Version</th>
                             <th>Status</th>
                             <th>Taxa</th>
-                            <th>Additions</th>
-                            <th>Updates</th>
+                            <th>Changes</th>
                             <th>DOI</th>
                             <th>Published</th>
                             <th>Published by</th>
@@ -92,7 +96,6 @@
                     No checklist versions found for this module.
                 </p>
 
-                {# Pagination #}
                 <div id="paginator-wrapper" class="paginator-wrapper" style="display:none;">
                     <ul class="pagination">
                         <li class="page-item" id="pg-prev">
@@ -112,8 +115,7 @@
     </div>
 </div>
 
-{# ── Add-version modal ────────────────────────────────────────────────────── #}
-{% if can_publish %}
+{% if can_create_version %}
 <div class="modal fade" id="add-version-modal" tabindex="-1" role="dialog"
      aria-labelledby="add-version-modal-label" aria-hidden="true">
     <div class="modal-dialog" role="document">
@@ -186,7 +188,6 @@
 </div>
 {% endif %}
 
-{# ── Version detail modal ─────────────────────────────────────────────────── #}
 <div class="modal fade" id="version-detail-modal" tabindex="-1" role="dialog"
      aria-labelledby="version-detail-modal-label" aria-hidden="true">
     <div class="modal-dialog modal-lg" role="document">
@@ -214,358 +215,5 @@
 
 
 {% block foot %}
-<script>
-    const csrfToken = '{{ csrf_token }}';
-    const canPublish = {{ can_publish|yesno:"true,false" }};
-    const apiBase = '/api/checklist-version/';
-
-    let nextUrl = null;
-    let prevUrl = null;
-    let currentPage = 1;
-
-    const $groupSelect  = $('#group-select');
-    const $statusSelect = $('#status-select');
-    const $loading      = $('#version-loading');
-    const $table        = $('#version-table');
-    const $tbody        = $('#version-tbody');
-    const $empty        = $('#version-empty');
-    const $paginator    = $('#paginator-wrapper');
-    const $btnPrev      = $('#btn-prev');
-    const $btnNext      = $('#btn-next');
-    const $pageInfo     = $('#page-info');
-    const $pgPrev       = $('#pg-prev');
-    const $pgNext       = $('#pg-next');
-
-    // ── URL helpers ──────────────────────────────────────────────────────────
-    function getParam(key) {
-        return new URLSearchParams(window.location.search).get(key);
-    }
-
-    function pushParams(groupId, status) {
-        const url = new URL(window.location.href);
-        url.searchParams.set('module', groupId);
-        if (status) url.searchParams.set('status', status);
-        else url.searchParams.delete('status');
-        window.history.pushState({ module: groupId, status }, '', url.toString());
-    }
-
-    // ── Render ───────────────────────────────────────────────────────────────
-    function statusBadge(status) {
-        return `<span class="badge badge-pill badge-${status}">${status.charAt(0).toUpperCase() + status.slice(1)}</span>`;
-    }
-
-    function fmtDate(iso) {
-        return iso
-            ? new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
-            : '—';
-    }
-
-    function renderRows(versions) {
-        return versions.map(v => `
-            <tr>
-                <td>
-                    <a href="#" class="font-weight-bold version-detail-link"
-                       data-id="${v.id}">${v.version}</a>
-                </td>
-                <td>${statusBadge(v.status)}</td>
-                <td>${v.status === 'published'
-                    ? v.taxa_count
-                    : '<span class="text-muted" title="Taxa snapshot is only available after publishing">—</span>'}</td>
-                <td>${v.additions_count ? '<span class="text-success">+' + v.additions_count + '</span>' : '—'}</td>
-                <td>${v.updates_count   ? '<span class="text-primary">'  + v.updates_count   + '</span>' : '—'}</td>
-                <td>${v.doi
-                    ? `<a href="${v.doi}" target="_blank" rel="noopener">${v.doi.length > 35 ? v.doi.substring(0,35) + '…' : v.doi}</a>`
-                    : '—'}</td>
-                <td>${fmtDate(v.published_at)}</td>
-                <td>${v.published_by_name || '—'}</td>
-                <td>${v.created_by_name || '—'}</td>
-                <td>
-                    ${v.status === 'published'
-                        ? `<a href="/api/coldp/taxon/${v.id}/"
-                              target="_blank" class="btn btn-sm btn-outline-secondary"
-                              style="font-size:10pt;">ColDP</a>`
-                        : ''}
-                </td>
-            </tr>`).join('');
-    }
-
-    // ── Fetch & display ──────────────────────────────────────────────────────
-    async function loadVersions(url) {
-        $loading.show();
-        $table.hide();
-        $empty.hide();
-        $paginator.hide();
-
-        try {
-            const resp = await fetch(url, {
-                headers: { 'X-Requested-With': 'XMLHttpRequest' }
-            });
-            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-            const data = await resp.json();
-
-            nextUrl = data.next;
-            prevUrl = data.previous;
-
-            const results = data.results || [];
-            if (results.length) {
-                $tbody.html(renderRows(results));
-                $table.show();
-            } else {
-                $empty.show();
-            }
-
-            if (data.count > results.length || prevUrl) {
-                $pageInfo.text(`Page ${currentPage} of ${Math.ceil(data.count / 20)}`);
-                $pgPrev.toggleClass('disabled', !prevUrl);
-                $pgNext.toggleClass('disabled', !nextUrl);
-                $paginator.show();
-            }
-        } catch (e) {
-            $tbody.html(`<tr><td colspan="9" class="text-danger">Failed to load: ${e.message}</td></tr>`);
-            $table.show();
-        } finally {
-            $loading.hide();
-        }
-    }
-
-    function buildUrl(groupId, status, page) {
-        let url = `${apiBase}?taxon_group=${groupId}&page=${page || 1}`;
-        if (status) url += `&status=${status}`;
-        return url;
-    }
-
-    function reload() {
-        currentPage = 1;
-        const groupId = $groupSelect.val();
-        const status  = $statusSelect.length ? $statusSelect.val() : '';
-        pushParams(groupId, status);
-        loadVersions(buildUrl(groupId, status, 1));
-        $('#av-group').val(groupId);
-    }
-
-    // ── Init from URL ────────────────────────────────────────────────────────
-    const initGroup  = getParam('module') || $groupSelect.find('option:first').val();
-    const initStatus = getParam('status') || '';
-    $groupSelect.val(initGroup);
-    if ($statusSelect.length) $statusSelect.val(initStatus);
-    loadVersions(buildUrl(initGroup, initStatus, 1));
-
-    // ── Events ───────────────────────────────────────────────────────────────
-    $groupSelect.on('change', reload);
-    if ($statusSelect.length) $statusSelect.on('change', reload);
-
-    $btnPrev.on('click', function (e) {
-        e.preventDefault();
-        if (prevUrl) { currentPage--; loadVersions(prevUrl); }
-    });
-    $btnNext.on('click', function (e) {
-        e.preventDefault();
-        if (nextUrl) { currentPage++; loadVersions(nextUrl); }
-    });
-
-    window.addEventListener('popstate', function (e) {
-        const s = e.state || {};
-        if (s.module) $groupSelect.val(s.module);
-        if ($statusSelect.length && s.status !== undefined) $statusSelect.val(s.status);
-        loadVersions(buildUrl($groupSelect.val(), $statusSelect.val ? $statusSelect.val() : '', 1));
-    });
-
-    // ── Add-version modal ────────────────────────────────────────────────────
-    {% if can_publish %}
-    function showError(msg) {
-        $('#add-version-error').text(msg).removeClass('d-none');
-        $('#add-version-success').addClass('d-none');
-    }
-    function showSuccess(msg) {
-        $('#add-version-success').text(msg).removeClass('d-none');
-        $('#add-version-error').addClass('d-none');
-    }
-
-    async function loadPreviousVersions(groupId) {
-        const $sel = $('#av-previous');
-        $sel.empty().append('<option value="">Loading…</option>').prop('disabled', true);
-        try {
-            const resp = await fetch(
-                `${apiBase}?taxon_group=${groupId}&status=published&page_size=100`,
-                { headers: { 'X-Requested-With': 'XMLHttpRequest' } }
-            );
-            const data = await resp.json();
-            $sel.empty().append('<option value="">— None (first release) —</option>');
-            (data.results || []).forEach(v => {
-                const dateStr = v.published_at
-                    ? new Date(v.published_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
-                    : 'unpublished';
-                $sel.append(
-                    $('<option>', { value: v.id, text: `${v.version} (${dateStr})` })
-                );
-            });
-        } catch (e) {
-            $sel.empty().append('<option value="">— None (first release) —</option>');
-        } finally {
-            $sel.prop('disabled', false);
-        }
-    }
-
-    $('#add-version-modal').on('show.bs.modal', function () {
-        $('#add-version-error, #add-version-success').addClass('d-none').text('');
-        $('#av-version, #av-doi, #av-notes').val('');
-        const groupId = $groupSelect.val();
-        $('#av-group').val(groupId);
-        loadPreviousVersions(groupId);
-    });
-
-    $('#av-group').on('change', function () {
-        loadPreviousVersions($(this).val());
-    });
-
-    function buildPayload() {
-        const version   = $('#av-version').val().trim();
-        const licenceId = $('#av-licence').val();
-        if (!version)   { showError('Version string is required.'); return null; }
-        if (!licenceId) { showError('Licence is required.');        return null; }
-        const payload = {
-            taxon_group: parseInt($('#av-group').val()),
-            version,
-            license: parseInt(licenceId),
-        };
-        const doi      = $('#av-doi').val().trim();
-        const notes    = $('#av-notes').val().trim();
-        const previous = ($('#av-previous').val() || '').trim();
-        if (doi)      payload.doi              = doi;
-        if (notes)    payload.notes            = notes;
-        if (previous) payload.previous_version = previous;
-        return payload;
-    }
-
-    async function saveVersion(publish) {
-        const payload = buildPayload();
-        if (!payload) return;
-
-        const $btn = publish ? $('#btn-save-publish') : $('#btn-save-draft');
-        const origText = $btn.text();
-        $btn.prop('disabled', true).text('Saving…');
-
-        try {
-            const resp = await fetch(apiBase, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-CSRFToken': csrfToken,
-                },
-                body: JSON.stringify(payload),
-            });
-            if (!resp.ok) {
-                const err = await resp.json().catch(() => ({}));
-                showError('Error: ' + (err.detail || JSON.stringify(err)));
-                return;
-            }
-            const data = await resp.json();
-
-            if (publish) {
-                const pubResp = await fetch(`${apiBase}${data.id}/publish/`, {
-                    method: 'POST',
-                    headers: { 'X-CSRFToken': csrfToken },
-                });
-                if (!pubResp.ok) {
-                    const err = await pubResp.json().catch(() => ({}));
-                    showError('Draft saved but publish failed: ' + (err.detail || JSON.stringify(err)));
-                    return;
-                }
-                showSuccess(`Version ${data.version} published.`);
-            } else {
-                showSuccess(`Draft "${data.version}" saved.`);
-            }
-
-            setTimeout(() => {
-                $('#add-version-modal').modal('hide');
-                reload();
-            }, 900);
-
-        } catch (e) {
-            showError('Request failed: ' + e.message);
-        } finally {
-            $btn.prop('disabled', false).text(origText);
-        }
-    }
-
-    $('#btn-save-draft').on('click',    () => saveVersion(false));
-    $('#btn-save-publish').on('click',  () => {
-        if (!confirm('Publish this version now? This cannot be undone.')) return;
-        saveVersion(true);
-    });
-    {% endif %}
-
-    // ── Version detail modal ─────────────────────────────────────────────────
-    $(document).on('click', '.version-detail-link', async function (e) {
-        e.preventDefault();
-        const id = $(this).data('id');
-        const $body = $('#version-detail-body');
-        $('#version-detail-modal-label').text('Checklist Version');
-        $body.html('<div class="text-center py-4"><span class="spinner-border spinner-border-sm"></span> Loading…</div>');
-        $('#version-detail-modal').modal('show');
-
-        try {
-            const resp = await fetch(`${apiBase}${id}/`, {
-                headers: { 'X-Requested-With': 'XMLHttpRequest' }
-            });
-            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-            const v = await resp.json();
-
-            $('#version-detail-modal-label').text(`Version ${v.version}`);
-            $body.html(`
-                <dl class="row mb-0">
-                    <dt class="col-sm-4">Module</dt>
-                    <dd class="col-sm-8">${v.taxon_group_name || '—'}</dd>
-
-                    <dt class="col-sm-4">Status</dt>
-                    <dd class="col-sm-8">${statusBadge(v.status)}</dd>
-
-                    <dt class="col-sm-4">Taxa</dt>
-                    <dd class="col-sm-8">${v.status === 'published'
-                        ? v.taxa_count
-                        : '<span class="text-muted">— (draft; snapshot created on publish)</span>'}</dd>
-
-                    <dt class="col-sm-4">Additions</dt>
-                    <dd class="col-sm-8">${v.additions_count
-                        ? '<span class="text-success">+' + v.additions_count + '</span>'
-                        : '—'}</dd>
-
-                    <dt class="col-sm-4">Updates</dt>
-                    <dd class="col-sm-8">${v.updates_count
-                        ? '<span class="text-primary">' + v.updates_count + '</span>'
-                        : '—'}</dd>
-
-                    <dt class="col-sm-4">DOI</dt>
-                    <dd class="col-sm-8">${v.doi
-                        ? `<a href="${v.doi}" target="_blank" rel="noopener">${v.doi}</a>`
-                        : '—'}</dd>
-
-                    <dt class="col-sm-4">Previous version</dt>
-                    <dd class="col-sm-8">${v.previous_version || '—'}</dd>
-
-                    <dt class="col-sm-4">Notes</dt>
-                    <dd class="col-sm-8">${v.notes || '—'}</dd>
-
-                    <dt class="col-sm-4">Created by</dt>
-                    <dd class="col-sm-8">${v.created_by_name || '—'}</dd>
-
-                    <dt class="col-sm-4">Created at</dt>
-                    <dd class="col-sm-8">${fmtDate(v.created_at)}</dd>
-
-                    <dt class="col-sm-4">Published by</dt>
-                    <dd class="col-sm-8">${v.published_by_name || '—'}</dd>
-
-                    <dt class="col-sm-4">Published at</dt>
-                    <dd class="col-sm-8">${fmtDate(v.published_at)}</dd>
-                </dl>
-                ${v.status === 'published' ? `
-                <hr>
-                <a href="/api/coldp/taxon/${v.id}/" target="_blank" rel="noopener"
-                   class="btn btn-sm btn-outline-secondary">Download ColDP</a>` : ''}
-            `);
-        } catch (e) {
-            $body.html(`<p class="text-danger">Failed to load: ${e.message}</p>`);
-        }
-    });
-</script>
+<script src="{% static 'js/checklist_page.js' %}"></script>
 {% endblock %}
