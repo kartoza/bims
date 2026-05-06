@@ -5,15 +5,13 @@ from django.utils.text import get_valid_filename
 
 
 def ensure_within_dir(path, base_dir):
-    """Return an absolute path after verifying it stays under base_dir."""
-    absolute_path = os.path.abspath(path)
-    absolute_base_dir = os.path.abspath(base_dir)
-    try:
-        if os.path.commonpath([absolute_base_dir, absolute_path]) != absolute_base_dir:
-            raise SuspiciousFileOperation('Attempted access outside permitted directory.')
-    except ValueError:
+    """Return a real path after verifying it stays under base_dir.
+    """
+    real_path = os.path.realpath(path)
+    real_base = os.path.realpath(base_dir)
+    if real_path != real_base and not real_path.startswith(real_base + os.sep):
         raise SuspiciousFileOperation('Attempted access outside permitted directory.')
-    return absolute_path
+    return real_path
 
 
 def sanitize_path_component(value, fallback='file'):

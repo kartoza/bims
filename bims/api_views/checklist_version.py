@@ -16,7 +16,7 @@ from rest_framework.views import APIView
 from bims.models.checklist_version import ChecklistVersion
 from bims.models.download_request import DownloadRequest
 from bims.models.taxon_group import TaxonGroup
-from bims.utils.filepath import ensure_within_dir
+from bims.utils.filepath import ensure_within_dir, sanitize_path_component
 
 
 class ChecklistVersionSerializer(serializers.ModelSerializer):
@@ -432,7 +432,10 @@ class ChecklistVersionExportView(APIView):
         except SuspiciousFileOperation:
             return Response({'detail': 'Export file not found.'}, status=404)
 
-        filename = dr.request_category or os.path.basename(file_path)
+        filename = sanitize_path_component(
+            dr.request_category or os.path.basename(safe_file_path),
+            'checklist',
+        )
         response = FileResponse(
             open(safe_file_path, 'rb'),
             content_type='application/zip',
