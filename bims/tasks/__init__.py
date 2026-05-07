@@ -17,6 +17,7 @@ from bims.tasks.taxa import *  # noqa
 from bims.tasks.harvest_gbif_species import *  # noqa
 from bims.tasks.location_site_summary import *  # noqa
 from bims.tasks.checklist import *  # noqa
+from bims.tasks.coldp_export import *  # noqa
 from bims.tasks.cites_info import fetch_and_save_cites_listing
 from bims.tasks.virtual_museum_import import import_data_task
 from bims.tasks.taxon_group import delete_occurrences_by_taxon_group

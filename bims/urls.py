@@ -101,6 +101,9 @@ from bims.views.layer_upload import (
     BoundaryUploadView,
     UserBoundaryUploadView
 )
+from bims.views.checklist import (
+    ChecklistView
+)
 
 
 def login_redirect(request):
@@ -313,6 +316,7 @@ urlpatterns = [
     path('context-layers/',
         ContextLayersView.as_view(),
         name='context-layers-view'),
+    path('checklist/', ChecklistView.as_view(), name='checklist-view'),
     re_path(r'^login/?$', login_redirect, name='login_redirect'),
 ]
 

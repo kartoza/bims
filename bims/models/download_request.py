@@ -96,7 +96,7 @@ def params_from_dashboard_url(download_request):
 def validate_file_extension(value):
     import os
     ext = os.path.splitext(value.name)[1].lower()
-    valid_extensions = ['.csv', '.xlsx', '.xls', '.png', '.svg', '.pdf', '.jpg', '.jpeg']
+    valid_extensions = ['.csv', '.xlsx', '.xls', '.png', '.svg', '.pdf', '.jpg', '.jpeg', '.zip']
     if ext not in valid_extensions:
         raise ValidationError('File not supported!')
 
@@ -139,6 +139,7 @@ class DownloadRequest(models.Model):
     IMAGE = 'IMAGE'
     XLS = 'XLS'
     PDF = 'PDF'
+    ZIP = 'ZIP'
 
     RESOURCE_TYPE_CHOICES = [
         (CSV, 'Csv'),
@@ -147,6 +148,7 @@ class DownloadRequest(models.Model):
         (TABLE, 'Table'),
         (IMAGE, 'Image'),
         (PDF, 'Pdf'),
+        (ZIP, 'Zip'),
     ]
 
     requester = models.ForeignKey(

@@ -1,0 +1,219 @@
+{% extends 'main_base.html' %}
+{% load static %}
+{% load jsonify %}
+
+{% block subtitle %}Checklist{% endblock %}
+
+{% block head %}
+    <link href="{% static "css/non_validated_list.css" %}" rel="stylesheet">
+    <script src="{% static 'js/libs/jquery/jquery-3.3.1.min.js' %}"></script>
+    <script src="{% static "js/libs/bootstrap-4.0.0/js/bootstrap.min.js" %}"></script>
+    <style>
+        .badge-draft      { background: #6c757d; color: #fff; }
+        .badge-published  { background: #28a745; color: #fff; }
+        .badge-publishing { background: #fd7e14; color: #fff; }
+        #version-loading { display: none; color: #666; padding: 8px 0; }
+        #add-version-modal .btn-publish { background: #28a745; color: #fff; }
+        #add-version-modal .btn-publish:hover { background: #218838; }
+        #version-table thead th { background: #fff; }
+    </style>
+{% endblock %}
+
+{% block body_content %}
+<div
+    id="checklist-page"
+    style="min-height: 100%; height: auto;"
+    data-csrf-token="{{ csrf_token }}"
+    data-can-publish="{{ can_publish|yesno:'true,false' }}"
+    data-is-superuser="{{ user.is_superuser|yesno:'true,false' }}"
+    data-publish-group-ids="{% for group_id in publish_group_ids %}{{ group_id }}{% if not forloop.last %},{% endif %}{% endfor %}"
+    data-api-base="/api/checklist-version/"
+>
+
+    <div class="container-fluid header-wrapper">
+        <div class="dashboard-title">
+            <h2>Checklist</h2>
+        </div>
+    </div>
+
+    <div class="container-fluid">
+        <div class="row">
+            <div class="col-lg-2">
+                <h5 style="border-bottom: 1px solid #b1b1b1; padding-bottom: 10px;">
+                    Filter by:
+                </h5>
+
+                <label class="my-1 mr-2">Module</label>
+                <select id="group-select" class="custom-select my-1 mr-sm-2">
+                    {% for group in groups %}
+                    <option value="{{ group.id }}">{{ group.name }}</option>
+                    {% endfor %}
+                </select>
+
+                {% if can_publish %}
+                <label class="my-1 mr-2 mt-3">Status</label>
+                <select id="status-select" class="custom-select my-1 mr-sm-2">
+                    <option value="">All</option>
+                    <option value="published">Published</option>
+                    <option value="draft">Draft</option>
+                </select>
+                {% endif %}
+
+                {% if can_create_version %}
+                <div class="mt-4">
+                    <button class="btn btn-primary btn-sm btn-block"
+                            data-toggle="modal" data-target="#add-version-modal">
+                        + Add Version
+                    </button>
+                </div>
+                {% endif %}
+            </div>
+
+            <div class="col-lg-10">
+                <div id="version-loading">
+                    <span class="spinner-border spinner-border-sm" role="status"></span>
+                    Loading…
+                </div>
+
+                <table class="table table-striped" id="version-table" style="display:none;">
+                    <thead>
+                        <tr>
+                            <th>Version</th>
+                            <th>Status</th>
+                            <th>Taxa</th>
+                            <th>Changes</th>
+                            <th>DOI</th>
+                            <th>Published</th>
+                            <th>Published by</th>
+                            <th>Created by</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="version-tbody"></tbody>
+                </table>
+
+                <p id="version-empty" class="text-muted" style="display:none;">
+                    No checklist versions found for this module.
+                </p>
+
+                <div id="paginator-wrapper" class="paginator-wrapper" style="display:none;">
+                    <ul class="pagination">
+                        <li class="page-item" id="pg-prev">
+                            <a class="page-link" href="#" id="btn-prev">&laquo;</a>
+                        </li>
+                        <li class="page-item disabled">
+                            <span class="page-link" id="page-info"></span>
+                        </li>
+                        <li class="page-item" id="pg-next">
+                            <a class="page-link" href="#" id="btn-next">&raquo;</a>
+                        </li>
+                    </ul>
+                </div>
+
+            </div>
+        </div>
+    </div>
+</div>
+
+{% if can_create_version %}
+<div class="modal fade" id="add-version-modal" tabindex="-1" role="dialog"
+     aria-labelledby="add-version-modal-label" aria-hidden="true">
+    <div class="modal-dialog" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="add-version-modal-label">
+                    Add Checklist Version
+                </h5>
+                <button type="button" class="close" data-dismiss="modal">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div id="add-version-error" class="alert alert-danger d-none"></div>
+                <div id="add-version-success" class="alert alert-success d-none"></div>
+
+                <div class="form-group">
+                    <label for="av-group">Module <span class="text-danger">*</span></label>
+                    <select id="av-group" class="form-control">
+                        {% for group in groups %}
+                        <option value="{{ group.id }}">{{ group.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="av-version">Version string <span class="text-danger">*</span></label>
+                    <input type="text" id="av-version" class="form-control"
+                           placeholder="e.g. 2025.1" maxlength="50">
+                </div>
+                <div class="form-group">
+                    <label for="av-previous">Previous version</label>
+                    <select id="av-previous" class="form-control">
+                        <option value="">— None (first release) —</option>
+                    </select>
+                    <small class="form-text text-muted">
+                        Required for additions/updates/unchanged change-type diffing.
+                    </small>
+                </div>
+                <div class="form-group">
+                    <label for="av-doi">DOI</label>
+                    <input type="text" id="av-doi" class="form-control"
+                           placeholder="https://doi.org/10.XXXX/YYYY">
+                </div>
+                <div class="form-group">
+                    <label for="av-licence">Licence <span class="text-danger">*</span></label>
+                    <select id="av-licence" class="form-control">
+                        {% for lic in licences %}
+                        <option value="{{ lic.id }}">
+                            {{ lic.identifier }} — {{ lic.name }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="av-notes">Notes</label>
+                    <textarea id="av-notes" class="form-control" rows="3"
+                              placeholder="Internal release notes…"></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary"
+                        data-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-outline-primary"
+                        id="btn-save-draft">Save as Draft</button>
+                <button type="button" class="btn btn-publish"
+                        id="btn-save-publish">Save &amp; Publish</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<div class="modal fade" id="version-detail-modal" tabindex="-1" role="dialog"
+     aria-labelledby="version-detail-modal-label" aria-hidden="true">
+    <div class="modal-dialog modal-lg" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="version-detail-modal-label">Checklist Version</h5>
+                <button type="button" class="close" data-dismiss="modal">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+            <div class="modal-body" id="version-detail-body">
+                <div class="text-center py-4">
+                    <span class="spinner-border spinner-border-sm"></span> Loading…
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% include 'footer.html' %}
+{% endblock %}
+
+
+{% block foot %}
+<script src="{% static 'js/checklist_page.js' %}"></script>
+{% endblock %}

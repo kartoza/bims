@@ -3342,6 +3342,7 @@ class ChecklistVersionAdmin(admin.ModelAdmin):
         'taxa_count',
         'additions_count',
         'updates_count',
+        'deletions_count',
         'published_at',
         'published_by',
         'created_at',
@@ -3361,7 +3362,7 @@ class ChecklistVersionAdmin(admin.ModelAdmin):
         }),
         ('Snapshot counters', {
             'fields': (
-                'taxa_count', 'additions_count', 'updates_count',
+                'taxa_count', 'additions_count', 'updates_count', 'deletions_count',
                 'changelog_summary_display',
             ),
             'classes': ('collapse',),
@@ -3374,15 +3375,11 @@ class ChecklistVersionAdmin(admin.ModelAdmin):
     def changelog_summary_display(self, obj):
         s = obj.changelog_summary
         return format_html(
-            '<strong>{}</strong> additions, <strong>{}</strong> updates '
+            '<strong>{}</strong> additions, <strong>{}</strong> updates, <strong>{}</strong> deletions '
             '(<strong>{}</strong> total changes)',
-            s['additions'], s['updates'], s['total'],
+            s['additions'], s['updates'], s['deletions'], s['total'],
         )
     changelog_summary_display.short_description = 'Changelog summary'
-
-    # ------------------------------------------------------------------
-    # Custom change-view: inject "Publish" and "Collect proposals" buttons
-    # ------------------------------------------------------------------
 
     def change_view(self, request, object_id, form_url='', extra_context=None):
         extra_context = extra_context or {}

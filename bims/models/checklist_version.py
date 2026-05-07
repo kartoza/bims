@@ -27,11 +27,13 @@ class ChecklistSnapshot(models.Model):
     CHANGE_ADDED     = 'added'
     CHANGE_UPDATED   = 'updated'
     CHANGE_UNCHANGED = 'unchanged'
+    CHANGE_DELETED   = 'deleted'
 
     CHANGE_CHOICES = [
         (CHANGE_ADDED,     'Added'),
         (CHANGE_UPDATED,   'Updated'),
         (CHANGE_UNCHANGED, 'Unchanged'),
+        (CHANGE_DELETED,   'Deleted'),
     ]
 
     checklist_version = models.ForeignKey(
@@ -107,7 +109,7 @@ class ChecklistSnapshot(models.Model):
         choices=CHANGE_CHOICES,
         default=CHANGE_UNCHANGED,
         db_index=True,
-        help_text='Whether this taxon was added, updated, or unchanged in this version.',
+        help_text='Whether this taxon was added, updated, unchanged, or deleted in this version.',
     )
 
     class Meta:
@@ -119,7 +121,11 @@ class ChecklistSnapshot(models.Model):
         ]
 
     def __str__(self):
-        return f'{self.scientific_name} [{self.checklist_version}]'
+        version = self.__dict__.get('checklist_version')
+        version_repr = version if version is not None else (
+            self.checklist_version_id or 'deleted checklist version'
+        )
+        return f'{self.scientific_name} [{version_repr}]'
 
 
 class ChecklistVersion(models.Model):
@@ -208,9 +214,14 @@ class ChecklistVersion(models.Model):
         help_text='Internal release notes visible to editors.',
     )
 
-    taxa_count      = models.IntegerField(default=0)
-    additions_count = models.IntegerField(default=0)
-    updates_count   = models.IntegerField(default=0)
+    taxa_count       = models.IntegerField(default=0)
+    additions_count  = models.IntegerField(default=0)
+    updates_count    = models.IntegerField(default=0)
+    deletions_count  = models.IntegerField(default=0)
+    is_publishing    = models.BooleanField(
+        default=False,
+        help_text='True while the publish task is running. Cleared when publishing completes or fails.',
+    )
 
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -247,6 +258,10 @@ class ChecklistVersion(models.Model):
         if self.status == self.STATUS_PUBLISHED:
             return
 
+        # Mark as publishing so the UI can show a spinner even across page refreshes
+        self.is_publishing = True
+        self.save(update_fields=['is_publishing'])
+
         # Collect all descendant taxon group IDs
         descendant_groups = self.taxon_group.get_all_children()
         taxon_group_ids = [self.taxon_group_id]
@@ -265,10 +280,12 @@ class ChecklistVersion(models.Model):
         rows = []
         additions = 0
         updates = 0
+        current_ids = set()
 
         for taxonomy in (
             Taxonomy.objects.filter(
-                taxongrouptaxonomy__taxongroup_id__in=taxon_group_ids
+                taxongrouptaxonomy__taxongroup_id__in=taxon_group_ids,
+                taxongrouptaxonomy__is_validated=True,
             )
             .distinct()
             .select_related('parent', 'accepted_taxonomy', 'source_reference')
@@ -276,6 +293,7 @@ class ChecklistVersion(models.Model):
         ):
             row = self.build_snapshot_row(taxonomy, ChecklistSnapshot.CHANGE_UNCHANGED)
             cid = str(taxonomy.pk)
+            current_ids.add(cid)
 
             if cid not in prev_snapshot:
                 row.change_type = ChecklistSnapshot.CHANGE_ADDED
@@ -292,17 +310,45 @@ class ChecklistVersion(models.Model):
 
             rows.append(row)
 
+        deleted_ids = set(prev_snapshot.keys()) - current_ids
+        deletions = len(deleted_ids)
+        for cid in deleted_ids:
+            prev = prev_snapshot[cid]
+            rows.append(ChecklistSnapshot(
+                checklist_version=self,
+                checklist_id=cid,
+                scientific_name=prev['scientific_name'],
+                rank=prev['rank'],
+                authorship=prev.get('authorship', ''),
+                taxonomic_status=prev.get('taxonomic_status', ''),
+                parent_checklist_id=prev.get('parent_checklist_id', ''),
+                basionym_checklist_id=prev.get('basionym_checklist_id', ''),
+                kingdom=prev.get('kingdom', ''),
+                phylum=prev.get('phylum', ''),
+                klass=prev.get('klass', ''),
+                order=prev.get('order', ''),
+                family=prev.get('family', ''),
+                genus=prev.get('genus', ''),
+                vernacular_names=prev.get('vernacular_names', []),
+                distributions=prev.get('distributions', []),
+                reference_id=prev.get('reference_id', ''),
+                change_type=ChecklistSnapshot.CHANGE_DELETED,
+            ))
+
         ChecklistSnapshot.objects.bulk_create(rows, ignore_conflicts=True)
 
-        self.taxa_count      = len(rows)
+        self.taxa_count      = len(current_ids)
         self.additions_count = additions
         self.updates_count   = updates
+        self.deletions_count = deletions
+        self.is_publishing   = False
         self.status          = self.STATUS_PUBLISHED
         self.published_at    = timezone.now()
         self.published_by    = published_by
         self.save(update_fields=[
             'status', 'published_at', 'published_by',
-            'taxa_count', 'additions_count', 'updates_count',
+            'taxa_count', 'additions_count', 'updates_count', 'deletions_count',
+            'is_publishing',
         ])
 
     def build_snapshot_row(self, taxonomy, change_type):
@@ -353,7 +399,8 @@ class ChecklistVersion(models.Model):
         return {
             'additions': self.additions_count,
             'updates':   self.updates_count,
-            'total':     self.additions_count + self.updates_count,
+            'deletions': self.deletions_count,
+            'total':     self.additions_count + self.updates_count + self.deletions_count,
         }
 
     class Meta:

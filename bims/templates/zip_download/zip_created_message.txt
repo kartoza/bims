@@ -1,0 +1,9 @@
+{% load i18n %}
+You have received the following notice from {{ current_site }}:
+
+{% trans "Your requested ZIP file has been compiled and is now ready, please find the attached file." %}
+
+{% if download_request_id %}
+You can also view the request details here:
+http://{{ current_site }}/download-request/{{ download_request_id }}/
+{% endif %}
