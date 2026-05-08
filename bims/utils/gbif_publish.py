@@ -119,15 +119,17 @@ def write_occurrence_txt(
             if not recorded_by and r.collector_user:
                 collector_user = r.collector_user
                 recorded_by = (
-                        r.collector_user.get_full_name() or
-                        r.collector_user.username).strip()
-            if not recorded_by and r.owner:
-                recorded_by = (
-                        r.owner.get_full_name() or
-                        r.owner.username).strip()
+                    r.collector_user.get_full_name() or
+                    r.collector_user.username
+                ).strip()
                 if 'admin' in recorded_by.lower():
                     recorded_by = ''
-                else:
+                    collector_user = None
+
+            if not recorded_by and r.owner:
+                candidate = (r.owner.get_full_name() or r.owner.username).strip()
+                if 'admin' not in candidate.lower():
+                    recorded_by = candidate
                     collector_user = r.owner
 
             row_dataset_name = dataset_name or _site_name()

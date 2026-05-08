@@ -251,7 +251,7 @@ class TestCollectionUpload(FastTenantTestCase):
         )
         self.assertTrue(bio.exists())
         self.assertEqual(bio.first().sampling_effort_link.name, 'Time(min)')
-        self.assertEqual(bio.first().institution_id, 'Kartoza_Admin')
+        self.assertEqual(bio.first().institution_id, 'bims_test')
         self.assertEqual(BiologicalCollectionRecord.objects.filter(
             Q(uuid='5a08bfe1-0e9b-4e0e-bf30-5b50156d35a9') |
             Q(uuid='5a08bfe10e9b4e0ebf305b50156d35a9')
@@ -279,7 +279,7 @@ class TestCollectionUpload(FastTenantTestCase):
             Q(uuid='5a08bfe10e9b4e0ebf305b50156d35a9')
         )
         self.assertEqual(bio.count(), 1)
-        self.assertEqual(bio.first().site.legacy_river_name, 'User River Name 2')
+        self.assertEqual(bio.first().site.legacy_river_name, 'User River Name')
         self.assertEqual(
             BiologicalCollectionRecord.objects.filter(
                 site__name='Park A'
