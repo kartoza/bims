@@ -29,7 +29,7 @@
     "@babel/runtime": "^7.27.0",
     "array-move": "^4.0.0",
     "async": "^2.6.4",
-    "axios": "^1.15.0",
+    "axios": "^1.15.2",
     "babel-core": "^7.0.0-bridge.0",
     "babel-jest": "^27.4.6",
     "babel-loader": "^8.3.0",
