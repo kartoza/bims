@@ -1,11 +1,14 @@
 import hashlib
 import json
+import logging
 import random
 import string
 from typing import Dict
 
 import requests
 import re
+
+logger = logging.getLogger(__name__)
 
 from bims.models import LocationContextGroup, LocationContext
 from bims.models.location_site import LocationSite
@@ -189,11 +192,11 @@ def generate_sanparks_site_code(lat: float, lon: float, site_name: str = ''):
             results = feature_data.get('result', [])
             if results and 'feature' in results[0] and context_key in results[0]['feature']:
                 park_name = results[0]['feature'][context_key]
-                print(f"Found park name from GIS query: {park_name}")
+                logger.debug(f"Found park name from GIS query: {park_name}")
 
     if not park_name:
         park_name = site_name
-        print(f"No park boundary found. Fallback: {park_name if park_name else 'N/A'}")
+        logger.warning(f"No park boundary found. Fallback: {park_name if park_name else 'N/A'}")
 
     cleaned_name = re.sub('[^A-Za-z]', '', park_name)
     code = cleaned_name[:3]

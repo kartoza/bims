@@ -102,10 +102,63 @@ class OccurrenceProcessor(object):
         self._count_skipped = 0
         self.survey = None
 
+        self._file_logger = None
+        self._file_handler = None
+        self._setup_file_logger()
+
+    def _setup_file_logger(self):
+        """Create (or reuse) the log file on the upload session and attach a FileHandler."""
+        if not self.upload_session or not self.upload_session.pk:
+            return
+
+        from django.core.files.base import ContentFile
+
+        session = self.upload_session
+
+        # Create the log file on first run; on resume the existing file is appended to.
+        if not session.log_file:
+            session.log_file.save(
+                f"upload-session-{session.id}.log",
+                ContentFile(
+                    f"Upload session {session.id} started\n"
+                    f"Category: {session.category}\n"
+                    f"File: {session.process_file.name if session.process_file else '-'}\n"
+                    "---\n"
+                ),
+                save=True,
+            )
+
+        log_path = session.log_file.path
+        file_logger_name = f"bims.upload_session.{session.id}"
+        self._file_logger = logging.getLogger(file_logger_name)
+        self._file_logger.setLevel(logging.DEBUG)
+        self._file_logger.propagate = False
+
+        # Avoid duplicate handlers when restarted within the same process
+        if not self._file_logger.handlers:
+            handler = logging.FileHandler(log_path, mode="a", encoding="utf-8")
+            handler.setFormatter(
+                logging.Formatter("%(asctime)s %(levelname)-8s %(message)s")
+            )
+            self._file_logger.addHandler(handler)
+            self._file_handler = handler
+
+    def _teardown_file_logger(self):
+        """Flush and close the FileHandler so the file is fully written."""
+        if self._file_handler:
+            self._file_handler.flush()
+            self._file_handler.close()
+            if self._file_logger:
+                self._file_logger.removeHandler(self._file_handler)
+            self._file_handler = None
+
     def _log(self, level, msg, **extra):
         if "row_no" not in extra:
             extra["row_no"] = self._row_no or "-"
         self._adapter.log(level, msg, extra=extra)
+        if self._file_logger:
+            formatted_msg, _ = self._adapter.process(msg, {"extra": extra})
+            self._file_logger.log(level, formatted_msg)
 
     def _set_row_ctx(self, *, species=None, date=None, site=None):
         base = self._adapter.extra.copy()
@@ -146,6 +199,7 @@ class OccurrenceProcessor(object):
             f"Occurrence processing finished | ok={self._count_ok} err={self._count_err} skipped={self._count_skipped} duration={dur:.2f}s",
             row_no="-", species="-", date="-", site="-"
         )
+        self._teardown_file_logger()
 
     # Called by subclass; also logs
     def handle_error(self, row, message):

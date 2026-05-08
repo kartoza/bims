@@ -54,7 +54,11 @@ class IUCNAssessment(models.Model):
 
     def __str__(self):
         year = self.year_published or 'unknown'
-        return f'{self.taxonomy} ({year}) {self.red_list_category_code}'
+        try:
+            taxonomy = self.taxonomy
+        except Exception:
+            taxonomy = f'<taxonomy {self.taxonomy_id}>'
+        return f'{taxonomy} ({year}) {self.red_list_category_code}'
 
     class Meta:
         app_label = 'bims'
