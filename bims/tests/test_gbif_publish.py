@@ -35,6 +35,7 @@ from bims.tests.model_factories import (
     SourceReferenceDatabaseF,
     SourceReferenceDocumentF,
     BiologicalCollectionRecordF,
+    RecordTypeF,
     SurveyF,
     UserF,
 )
@@ -593,6 +594,34 @@ class GbifPublishApiTests(FastTenantTestCase):
         rows = self._read_occurrence_rows(zip_path)
         self.assertEqual(rows[0]["recordedBy"], "River Team")
         self.assertEqual(rows[0]["institutionCode"], "Owner Org")
+
+    def test_basis_of_record_mapping_for_requested_record_types(self):
+        source_reference = SourceReferenceF.create()
+        cases = [
+            ("Acoustic record", "HUMAN_OBSERVATION"),
+            ("DNA sample", "MATERIAL_SAMPLE"),
+            ("Photographic record", "MACHINE_OBSERVATION"),
+            ("Specimen collection", "MATERIAL_SAMPLE"),
+            ("Visual observation", "HUMAN_OBSERVATION"),
+        ]
+        temp_dir = tempfile.mkdtemp()
+        self.addCleanup(lambda: shutil.rmtree(temp_dir, ignore_errors=True))
+
+        for record_type_name, expected_basis in cases:
+            record_type = RecordTypeF.create(name=record_type_name)
+            record = self._make_record(source_reference, record_type=record_type)
+
+            with override_settings(MEDIA_ROOT=temp_dir, MEDIA_URL="/media/"):
+                zip_path, _, _ = build_dwca(
+                    self.config, [record], [self.contact], source_reference
+                )
+
+            rows = self._read_occurrence_rows(zip_path)
+            self.assertEqual(
+                rows[0]["basisOfRecord"],
+                expected_basis,
+                msg=f"Unexpected basisOfRecord for '{record_type_name}'",
+            )
 
     # -- abundance type mapping --
 

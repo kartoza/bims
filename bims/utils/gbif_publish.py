@@ -44,6 +44,16 @@ _ABUNDANCE_TYPE_MAP = {
     "species valve/frustule count":  ("valves/frustules", True),
 }
 
+_RECORD_TYPE_BASIS_MAP = {
+    "dna sample": "MATERIAL_SAMPLE",
+    "specimen collection": "MATERIAL_SAMPLE",
+    "photographic record": "MACHINE_OBSERVATION",
+    "visual observation": "HUMAN_OBSERVATION",
+    # For now treat acoustic records as human observations.
+    # This can be split into HUMAN/MACHINE once FBIS supports that distinction.
+    "acoustic record": "HUMAN_OBSERVATION",
+}
+
 
 def write_occurrence_txt(
     path: str,
@@ -88,8 +98,12 @@ def write_occurrence_txt(
             basis = "HUMAN_OBSERVATION"
             try:
                 rt = (r.record_type.name or "").lower()
-                if "sample" in rt:
+                if rt in _RECORD_TYPE_BASIS_MAP:
+                    basis = _RECORD_TYPE_BASIS_MAP[rt]
+                elif "sample" in rt or "specimen" in rt:
                     basis = "MATERIAL_SAMPLE"
+                elif "photo" in rt or "machine observation" in rt:
+                    basis = "MACHINE_OBSERVATION"
                 elif "observation" in rt or "visual" in rt:
                     basis = "HUMAN_OBSERVATION"
             except Exception:
