@@ -652,11 +652,29 @@ def next_site_code(project_name: str, site_prefix: str, width: int = 6) -> str:
     Generate the next unique site code for the given prefix.
     Uses decimal for every prefix except 'fbis_africa', which is base-36.
     """
-    serial = (
-        LocationSite.objects
-        .filter(site_code__startswith=site_prefix)
-        .count()
-    ) + 1
+    import re as _re
+    from django.db.models import Max, IntegerField
+    from django.db.models.functions import Cast, Substr
+
+    if project_name == "fbis_africa":
+        serial = (
+            LocationSite.objects
+            .filter(site_code__startswith=site_prefix)
+            .count()
+        ) + 1
+    else:
+        result = (
+            LocationSite.objects
+            .filter(site_code__regex=rf'^{_re.escape(site_prefix)}\d+$')
+            .annotate(
+                serial_num=Cast(
+                    Substr('site_code', len(site_prefix) + 1),
+                    output_field=IntegerField()
+                )
+            )
+            .aggregate(max_serial=Max('serial_num'))
+        )
+        serial = (result['max_serial'] or 0) + 1
 
     while True:
         if project_name == "fbis_africa":
