@@ -2541,6 +2541,80 @@ class UploadSessionAdmin(admin.ModelAdmin):
         'processed',
         'canceled'
     )
+    list_filter = ('category', 'processed', 'canceled')
+    readonly_fields = ('log_file',)
+    actions = ['restart_upload', 'restart_upload_from_start']
+
+    def restart_upload(self, request, queryset):
+        from celery import current_app
+        from django.utils import timezone
+        from bims.views.data_upload import RESUMABLE_TASK_MAP
+
+        queued = 0
+        skipped = 0
+        for session in queryset:
+            if session.processed or session.canceled:
+                skipped += 1
+                continue
+            task_name = RESUMABLE_TASK_MAP.get(session.category)
+            if not task_name:
+                skipped += 1
+                continue
+            session.last_progress_update = timezone.now()
+            session.progress = 'Restarted via admin action'
+            session.save(update_fields=['last_progress_update', 'progress'])
+            current_app.send_task(task_name, args=[session.id])
+            queued += 1
+
+        if queued:
+            self.message_user(
+                request,
+                f'{queued} upload session(s) re-queued from last checkpoint.',
+            )
+        if skipped:
+            self.message_user(
+                request,
+                f'{skipped} session(s) skipped (already done, cancelled, or unsupported category).',
+                level='warning',
+            )
+
+    restart_upload.short_description = 'Restart upload (resume from checkpoint)'
+
+    def restart_upload_from_start(self, request, queryset):
+        from celery import current_app
+        from django.utils import timezone
+        from bims.views.data_upload import RESUMABLE_TASK_MAP
+
+        queued = 0
+        skipped = 0
+        for session in queryset:
+            if session.processed or session.canceled:
+                skipped += 1
+                continue
+            task_name = RESUMABLE_TASK_MAP.get(session.category)
+            if not task_name:
+                skipped += 1
+                continue
+            session.start_row = 0
+            session.last_progress_update = timezone.now()
+            session.progress = 'Restarted from beginning via admin action'
+            session.save(update_fields=['start_row', 'last_progress_update', 'progress'])
+            current_app.send_task(task_name, args=[session.id])
+            queued += 1
+
+        if queued:
+            self.message_user(
+                request,
+                f'{queued} upload session(s) re-queued from the beginning.',
+            )
+        if skipped:
+            self.message_user(
+                request,
+                f'{skipped} session(s) skipped (already done, cancelled, or unsupported category).',
+                level='warning',
+            )
+
+    restart_upload_from_start.short_description = 'Restart upload (from beginning)'
 
 
 class LocationContextGroupAdmin(admin.ModelAdmin):

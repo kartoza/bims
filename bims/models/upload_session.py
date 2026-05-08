@@ -136,6 +136,13 @@ class UploadSession(models.Model):
         help_text='Row index to resume processing from (0 = start from beginning)'
     )
 
+    log_file = models.FileField(
+        upload_to='upload-session-log/',
+        null=True,
+        blank=True,
+        help_text='Log file capturing per-row processing output for this upload session'
+    )
+
     # noinspection PyClassicStyleClass
     class Meta:
         """Meta class for project."""
