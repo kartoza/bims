@@ -547,6 +547,53 @@ class GbifPublishApiTests(FastTenantTestCase):
                 f"Expected occurrenceID to start with '{tenant}:', got '{row['occurrenceID']}'",
             )
 
+    def test_institution_code_uses_collector_user_organization(self):
+        source_reference = SourceReferenceF.create()
+        user = UserF.create(first_name="Data", last_name="Owner")
+        user.organization = "Freshwater Research Centre"
+        user.save()
+        record = self._make_record(
+            source_reference,
+            collector="",
+            collector_user=user,
+            owner=user,
+            institution_id="LEGACY-INST-ID",
+        )
+        temp_dir = tempfile.mkdtemp()
+        self.addCleanup(lambda: shutil.rmtree(temp_dir, ignore_errors=True))
+
+        with override_settings(MEDIA_ROOT=temp_dir, MEDIA_URL="/media/"):
+            zip_path, _, _ = build_dwca(
+                self.config, [record], [self.contact], source_reference
+            )
+
+        rows = self._read_occurrence_rows(zip_path)
+        self.assertEqual(rows[0]["institutionCode"], "Freshwater Research Centre")
+
+    def test_owner_fallback_sets_recorded_by_and_institution_code(self):
+        source_reference = SourceReferenceF.create()
+        owner = UserF.create(first_name="River", last_name="Team")
+        owner.organization = "Owner Org"
+        owner.save()
+        record = self._make_record(
+            source_reference,
+            collector="",
+            collector_user=None,
+            owner=owner,
+            institution_id="LEGACY-INST-ID",
+        )
+        temp_dir = tempfile.mkdtemp()
+        self.addCleanup(lambda: shutil.rmtree(temp_dir, ignore_errors=True))
+
+        with override_settings(MEDIA_ROOT=temp_dir, MEDIA_URL="/media/"):
+            zip_path, _, _ = build_dwca(
+                self.config, [record], [self.contact], source_reference
+            )
+
+        rows = self._read_occurrence_rows(zip_path)
+        self.assertEqual(rows[0]["recordedBy"], "River Team")
+        self.assertEqual(rows[0]["institutionCode"], "Owner Org")
+
     # -- abundance type mapping --
 
     def _make_record_with_abundance(self, source_reference, abundance_name, abundance_number):

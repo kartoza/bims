@@ -837,6 +837,8 @@ class OccurrenceProcessor(object):
 
             # -- Processing collectors
             custodian = DataCSVUpload.row_value(row, CUSTODIAN)
+            if custodian:
+                optional_data["institution_id"] = custodian.strip()
             collectors = create_users_from_string(DataCSVUpload.row_value(row, COLLECTOR_OR_OWNER))
             if not collectors:
                 collectors = create_users_from_string(DataCSVUpload.row_value(row, COLLECTOR_OR_OWNER_2))

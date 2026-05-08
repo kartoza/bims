@@ -251,6 +251,7 @@ class TestCollectionUpload(FastTenantTestCase):
         )
         self.assertTrue(bio.exists())
         self.assertEqual(bio.first().sampling_effort_link.name, 'Time(min)')
+        self.assertEqual(bio.first().institution_id, 'Kartoza_Admin')
         self.assertEqual(BiologicalCollectionRecord.objects.filter(
             Q(uuid='5a08bfe1-0e9b-4e0e-bf30-5b50156d35a9') |
             Q(uuid='5a08bfe10e9b4e0ebf305b50156d35a9')

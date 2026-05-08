@@ -100,19 +100,28 @@ def write_occurrence_txt(
             catalog_number = str(r.pk)
 
             recorded_by = (r.collector or "").strip()
+            collector_user = None
+
             if not recorded_by and r.collector_user:
+                collector_user = r.collector_user
                 recorded_by = (
                         r.collector_user.get_full_name() or
                         r.collector_user.username).strip()
             if not recorded_by and r.owner:
                 recorded_by = (
-                        r.collector_user.get_full_name() or
-                        r.collector_user.username).strip()
+                        r.owner.get_full_name() or
+                        r.owner.username).strip()
                 if 'admin' in recorded_by.lower():
                     recorded_by = ''
+                else:
+                    collector_user = r.owner
 
             row_dataset_name = dataset_name or _site_name()
             inst_code = (r.institution_id or "").strip()
+
+            if collector_user:
+                inst_code = collector_user.organization
+
             dg = ""
 
             event_date = ""
