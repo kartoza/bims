@@ -44,6 +44,16 @@ _ABUNDANCE_TYPE_MAP = {
     "species valve/frustule count":  ("valves/frustules", True),
 }
 
+_RECORD_TYPE_BASIS_MAP = {
+    "dna sample": "MATERIAL_SAMPLE",
+    "specimen collection": "MATERIAL_SAMPLE",
+    "photographic record": "MACHINE_OBSERVATION",
+    "visual observation": "HUMAN_OBSERVATION",
+    # For now treat acoustic records as human observations.
+    # This can be split into HUMAN/MACHINE once FBIS supports that distinction.
+    "acoustic record": "HUMAN_OBSERVATION",
+}
+
 
 def write_occurrence_txt(
     path: str,
@@ -88,8 +98,12 @@ def write_occurrence_txt(
             basis = "HUMAN_OBSERVATION"
             try:
                 rt = (r.record_type.name or "").lower()
-                if "sample" in rt:
+                if rt in _RECORD_TYPE_BASIS_MAP:
+                    basis = _RECORD_TYPE_BASIS_MAP[rt]
+                elif "sample" in rt or "specimen" in rt:
                     basis = "MATERIAL_SAMPLE"
+                elif "photo" in rt or "machine observation" in rt:
+                    basis = "MACHINE_OBSERVATION"
                 elif "observation" in rt or "visual" in rt:
                     basis = "HUMAN_OBSERVATION"
             except Exception:
@@ -100,13 +114,30 @@ def write_occurrence_txt(
             catalog_number = str(r.pk)
 
             recorded_by = (r.collector or "").strip()
+            collector_user = None
+
             if not recorded_by and r.collector_user:
+                collector_user = r.collector_user
                 recorded_by = (
-                        r.collector_user.get_full_name() or
-                        r.collector_user.username).strip()
+                    r.collector_user.get_full_name() or
+                    r.collector_user.username
+                ).strip()
+                if 'admin' in recorded_by.lower():
+                    recorded_by = ''
+                    collector_user = None
+
+            if not recorded_by and r.owner:
+                candidate = (r.owner.get_full_name() or r.owner.username).strip()
+                if 'admin' not in candidate.lower():
+                    recorded_by = candidate
+                    collector_user = r.owner
 
             row_dataset_name = dataset_name or _site_name()
             inst_code = (r.institution_id or "").strip()
+
+            if collector_user:
+                inst_code = collector_user.organization
+
             dg = ""
 
             event_date = ""
@@ -183,12 +214,14 @@ def eml_author(author) -> str:
     email = getattr(user, 'email', '').strip()
     org = (getattr(user, 'organization', '') or '').strip()
 
-    parts = ['<individualName>']
-    if given:
-        parts.append(f'    <givenName>{given}</givenName>')
-    if sur:
-        parts.append(f'    <surName>{sur}</surName>')
-    parts.append('  </individualName>')
+    parts = []
+    if given or sur:
+        parts.append('<individualName>')
+        if given:
+            parts.append(f'    <givenName>{given}</givenName>')
+        if sur:
+            parts.append(f'    <surName>{sur}</surName>')
+        parts.append('  </individualName>')
     if org:
         parts.append(f'  <organizationName>{org}</organizationName>')
     if role_name:
@@ -218,12 +251,14 @@ def eml_contact_from_model(contact) -> str:
     postal = (contact.postal_code or "").strip()
     country = (contact.country or "").strip()
 
-    parts = ["<individualName>"]
-    if given:
-        parts.append(f"    <givenName>{given}</givenName>")
-    if sur:
-        parts.append(f"    <surName>{sur}</surName>")
-    parts.append("  </individualName>")
+    parts = []
+    if given or sur:
+        parts.append("<individualName>")
+        if given:
+            parts.append(f"    <givenName>{given}</givenName>")
+        if sur:
+            parts.append(f"    <surName>{sur}</surName>")
+        parts.append("  </individualName>")
 
     if org:
         parts.append(f"  <organizationName>{org}</organizationName>")
@@ -514,8 +549,9 @@ def build_dwca(
         raise ValueError("No eligible records to export.")
 
     title = ref_title
+    publisher_name = getattr(config, 'name', None) or _site_name()
     abstract = (
-        f"Occurrence dataset for {ref_title} uploaded to {_site_name()}."
+        f"Occurrence dataset for {ref_title} uploaded to {publisher_name}."
     )
     raw_sra = list(source_reference.author_list or []) if source_reference else []
     authors = []
@@ -682,8 +718,9 @@ def publish_gbif_data_with_config(
         trigger_crawl_with_config(config, dataset_key)
     else:
         title = ref_title
+        publisher_name = getattr(config, 'name', None) or _site_name()
         description = (
-            f"Occurrence dataset for {ref_title} uploaded to {_site_name()}."
+            f"Occurrence dataset for {ref_title} uploaded to {publisher_name}."
         )
         dataset_key = register_dataset(config, title, description)
         add_endpoint(config, dataset_key, archive_url)

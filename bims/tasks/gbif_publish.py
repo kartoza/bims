@@ -89,6 +89,13 @@ def run_scheduled_gbif_publish(self, schema_name: str, publish_id: int, trigger:
                 config = publish_schedule.gbif_config
                 source_reference = publish_schedule.source_reference
 
+                if source_reference and not source_reference.publish_to_gbif:
+                    return {
+                        "status": "excluded_from_gbif",
+                        "publish_id": publish_id,
+                        "source_reference": str(source_reference),
+                    }
+
                 select = ("user", "user__bims_profile", "user__bims_profile__role")
                 config_contacts = list(
                     GbifPublishContact.objects

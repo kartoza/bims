@@ -129,6 +129,11 @@ class SourceReference(PolymorphicModel):
         blank=True,
         help_text='Date of this source reference'
     )
+    publish_to_gbif = models.BooleanField(
+        default=True,
+        help_text='Allow this source reference to be published to GBIF. '
+                  'Uncheck to exclude it from all GBIF publish schedules.'
+    )
 
     @property
     def reference_source(self):
