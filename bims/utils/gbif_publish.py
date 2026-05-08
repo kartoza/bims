@@ -104,6 +104,12 @@ def write_occurrence_txt(
                 recorded_by = (
                         r.collector_user.get_full_name() or
                         r.collector_user.username).strip()
+            if not recorded_by and r.owner:
+                recorded_by = (
+                        r.collector_user.get_full_name() or
+                        r.collector_user.username).strip()
+                if 'admin' in recorded_by.lower():
+                    recorded_by = ''
 
             row_dataset_name = dataset_name or _site_name()
             inst_code = (r.institution_id or "").strip()
@@ -183,12 +189,14 @@ def eml_author(author) -> str:
     email = getattr(user, 'email', '').strip()
     org = (getattr(user, 'organization', '') or '').strip()
 
-    parts = ['<individualName>']
-    if given:
-        parts.append(f'    <givenName>{given}</givenName>')
-    if sur:
-        parts.append(f'    <surName>{sur}</surName>')
-    parts.append('  </individualName>')
+    parts = []
+    if given or sur:
+        parts.append('<individualName>')
+        if given:
+            parts.append(f'    <givenName>{given}</givenName>')
+        if sur:
+            parts.append(f'    <surName>{sur}</surName>')
+        parts.append('  </individualName>')
     if org:
         parts.append(f'  <organizationName>{org}</organizationName>')
     if role_name:
@@ -218,12 +226,14 @@ def eml_contact_from_model(contact) -> str:
     postal = (contact.postal_code or "").strip()
     country = (contact.country or "").strip()
 
-    parts = ["<individualName>"]
-    if given:
-        parts.append(f"    <givenName>{given}</givenName>")
-    if sur:
-        parts.append(f"    <surName>{sur}</surName>")
-    parts.append("  </individualName>")
+    parts = []
+    if given or sur:
+        parts.append("<individualName>")
+        if given:
+            parts.append(f"    <givenName>{given}</givenName>")
+        if sur:
+            parts.append(f"    <surName>{sur}</surName>")
+        parts.append("  </individualName>")
 
     if org:
         parts.append(f"  <organizationName>{org}</organizationName>")
@@ -514,8 +524,9 @@ def build_dwca(
         raise ValueError("No eligible records to export.")
 
     title = ref_title
+    publisher_name = getattr(config, 'name', None) or _site_name()
     abstract = (
-        f"Occurrence dataset for {ref_title} uploaded to {_site_name()}."
+        f"Occurrence dataset for {ref_title} uploaded to {publisher_name}."
     )
     raw_sra = list(source_reference.author_list or []) if source_reference else []
     authors = []
@@ -682,8 +693,9 @@ def publish_gbif_data_with_config(
         trigger_crawl_with_config(config, dataset_key)
     else:
         title = ref_title
+        publisher_name = getattr(config, 'name', None) or _site_name()
         description = (
-            f"Occurrence dataset for {ref_title} uploaded to {_site_name()}."
+            f"Occurrence dataset for {ref_title} uploaded to {publisher_name}."
         )
         dataset_key = register_dataset(config, title, description)
         add_endpoint(config, dataset_key, archive_url)

@@ -36,6 +36,24 @@ class HasGbifPublishFilter(admin.SimpleListFilter):
         return queryset
 
 
+class PublishToGbifFilter(admin.SimpleListFilter):
+    title = "Publish to GBIF"
+    parameter_name = "publish_to_gbif"
+
+    def lookups(self, request, model_admin):
+        return (
+            ("yes", "Allowed"),
+            ("no", "Excluded"),
+        )
+
+    def queryset(self, request, queryset):
+        if self.value() == "yes":
+            return queryset.filter(publish_to_gbif=True)
+        if self.value() == "no":
+            return queryset.filter(publish_to_gbif=False)
+        return queryset
+
+
 class DatabaseRecordAdmin(admin.ModelAdmin):
     list_display = ('name', 'url')
 
@@ -43,7 +61,7 @@ class DatabaseRecordAdmin(admin.ModelAdmin):
 class SourceReferenceBibliographyAdmin(PolymorphicChildModelAdmin):
     list_display = ('source', 'note', 'has_metadata')
     base_model = SourceReferenceBibliography
-    fields = ('source', 'document', 'note', 'source_name', 'verified', 'mobile', 'active_sites', 'metadata_file')
+    fields = ('source', 'document', 'note', 'source_name', 'verified', 'mobile', 'publish_to_gbif', 'metadata_file')
 
     def has_metadata(self, obj):
         return 'Yes' if obj.metadata_file else 'No'
@@ -53,7 +71,7 @@ class SourceReferenceBibliographyAdmin(PolymorphicChildModelAdmin):
 class SourceReferenceDatabaseAdmin(PolymorphicChildModelAdmin):
     list_display = ('source', 'note', 'has_metadata')
     base_model = SourceReferenceDatabase
-    fields = ('source', 'document', 'note', 'source_name', 'verified', 'mobile', 'active_sites', 'metadata_file')
+    fields = ('source', 'document', 'note', 'source_name', 'verified', 'mobile', 'publish_to_gbif', 'metadata_file')
 
     def has_metadata(self, obj):
         return 'Yes' if obj.metadata_file else 'No'
@@ -63,7 +81,7 @@ class SourceReferenceDatabaseAdmin(PolymorphicChildModelAdmin):
 class SourceReferenceDocumentAdmin(PolymorphicChildModelAdmin):
     list_display = ('source', 'note', 'has_metadata')
     base_model = SourceReferenceDocument
-    fields = ('source', 'note', 'source_name', 'verified', 'mobile', 'active_sites', 'metadata_file')
+    fields = ('source', 'note', 'source_name', 'verified', 'mobile', 'publish_to_gbif', 'metadata_file')
 
     def has_metadata(self, obj):
         return 'Yes' if obj.metadata_file else 'No'
@@ -80,6 +98,7 @@ class SourceReferenceAdmin(PolymorphicParentModelAdmin):
         'total_records',
         'has_metadata',
         'has_gbif_publish',
+        'publish_to_gbif',
     )
     child_models = (
         SourceReferenceBibliography,
@@ -87,7 +106,7 @@ class SourceReferenceAdmin(PolymorphicParentModelAdmin):
         SourceReferenceDocument,
         SourceReference
     )
-    list_filter = (PolymorphicChildModelFilter, HasGbifPublishFilter)
+    list_filter = (PolymorphicChildModelFilter, HasGbifPublishFilter, PublishToGbifFilter)
     search_fields = (
         'sourcereferencebibliography__source__title',
         'sourcereferencedocument__source__title',
@@ -138,13 +157,28 @@ class SourceReferenceAdmin(PolymorphicParentModelAdmin):
         return GbifPublish.objects.filter(source_reference=obj).exists()
     has_gbif_publish.boolean = True
 
+    def publish_to_gbif(self, obj):
+        return obj.publish_to_gbif
+    publish_to_gbif.boolean = True
+
     source_reference_title.short_description = 'Title'
     reference_type.short_description = 'Reference Type'
     total_records.short_description = 'Total Occurrences'
     has_metadata.short_description = 'Has Metadata'
-    has_gbif_publish.short_description = 'GBIF Publish'
+    has_gbif_publish.short_description = 'GBIF Publish Schedule'
+    publish_to_gbif.short_description = 'Publish to GBIF'
 
-    actions = ['merge_source_references']
+    actions = ['merge_source_references', 'enable_gbif_publish', 'disable_gbif_publish']
+
+    def enable_gbif_publish(self, request, queryset):
+        updated = queryset.update(publish_to_gbif=True)
+        self.message_user(request, f'{updated} source reference(s) marked as allowed for GBIF publishing.')
+    enable_gbif_publish.short_description = 'Allow GBIF publishing for selected'
+
+    def disable_gbif_publish(self, request, queryset):
+        updated = queryset.update(publish_to_gbif=False)
+        self.message_user(request, f'{updated} source reference(s) excluded from GBIF publishing.')
+    disable_gbif_publish.short_description = 'Exclude selected from GBIF publishing'
 
     def merge_source_references(self, request, queryset):
 
@@ -164,6 +198,22 @@ class SourceReferenceAdmin(PolymorphicParentModelAdmin):
             self.message_user(
                 request, 'There are more than 1 verified source reference',
                 messages.ERROR)
+            return
+
+        gbif_published = queryset.filter(publish_to_gbif=True)
+        if gbif_published.exists():
+            titles = ', '.join(
+                f'"{sr.title}"' for sr in gbif_published
+            )
+            self.message_user(
+                request,
+                f'Merge blocked: the following source reference(s) are marked as '
+                f'"Publish to GBIF": {titles}. '
+                f'You will need to manually remove their occurrences from GBIF, '
+                f'set "Publish to GBIF" to No for each, then re-push from the '
+                f'merged source reference.',
+                messages.ERROR,
+            )
             return
 
         merge_source_references(primary_source_reference=verified.first(),

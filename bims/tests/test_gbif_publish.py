@@ -321,6 +321,22 @@ class GbifPublishTaskTests(FastTenantTestCase):
         self.assertEqual(result["status"], "disabled")
         self.assertFalse(GbifPublishSession.objects.exists())
 
+    def test_task_returns_excluded_when_publish_to_gbif_false(self):
+        """Schedule is skipped when source_reference.publish_to_gbif is False."""
+        source_reference = SourceReferenceBibliographyF.create()
+        source_reference.publish_to_gbif = False
+        source_reference.save()
+        schedule = self._create_schedule(source_reference=source_reference)
+        _make_contact(schedule.gbif_config)
+
+        with mock.patch("bims.tasks.gbif_publish.pg_advisory_lock") as lock_mock:
+            lock_mock.return_value.__enter__.return_value = True
+            lock_mock.return_value.__exit__.return_value = None
+            result = run_scheduled_gbif_publish(self.tenant.schema_name, schedule.id)
+
+        self.assertEqual(result["status"], "excluded_from_gbif")
+        self.assertFalse(GbifPublishSession.objects.exists())
+
     def test_task_returns_no_contacts_when_none_configured(self):
         schedule = self._create_schedule()
         # No contacts created for this config
@@ -488,21 +504,24 @@ class GbifPublishApiTests(FastTenantTestCase):
         self.assertNotIn("UTC", eml.split("<title>")[1].split("</title>")[0])
 
     def test_build_dwca_description_format(self):
+        """Description uses config.name as publisher, not SITE_NAME."""
         source_reference = SourceReferenceF.create()
         source_reference.source_name = "Fish Survey 2022"
         source_reference.save()
         record = self._make_record(source_reference)
+        config = _make_config(name="Freshwater Research Centre")
+        contact = _make_contact(config)
         temp_dir = tempfile.mkdtemp()
         self.addCleanup(lambda: shutil.rmtree(temp_dir, ignore_errors=True))
 
-        with override_settings(MEDIA_ROOT=temp_dir, MEDIA_URL="/media/", SITE_NAME="FBIS"):
+        with override_settings(MEDIA_ROOT=temp_dir, MEDIA_URL="/media/"):
             zip_path, _, _ = build_dwca(
-                self.config, [record], [self.contact], source_reference
+                config, [record], [contact], source_reference
             )
 
         eml = self._read_eml(zip_path)
         self.assertIn(
-            "Occurrence dataset for Fish Survey 2022 uploaded to FBIS.",
+            "Occurrence dataset for Fish Survey 2022 uploaded to Freshwater Research Centre.",
             eml,
         )
 
@@ -621,6 +640,15 @@ class GbifPublishApiTests(FastTenantTestCase):
         self.assertEqual(eml.count("<para>This work is licensed under"), 2)
 
     # -- eml_author: org and role --
+
+    def test_eml_author_org_only_omits_individual_name(self):
+        """User with no first/last name must not emit an empty <individualName> in <creator>."""
+        user = UserF.create(first_name="", last_name="")
+        user.organization = "Freshwater Research Centre"
+        user.save()
+        snippet = eml_author(user)
+        self.assertNotIn("<individualName>", snippet)
+        self.assertIn("<organizationName>Freshwater Research Centre</organizationName>", snippet)
 
     def test_eml_author_includes_organization_and_role(self):
         from bims.models.profile import Role, Profile as BimsProfile
@@ -909,6 +937,41 @@ class GbifPublishContactTests(FastTenantTestCase):
         )
         snippet = eml_contact_from_model(contact)
         self.assertNotIn("<address>", snippet)
+
+    def test_eml_contact_org_only_omits_individual_name(self):
+        """Org-only contact (no given/sur name) must not emit an empty <individualName>."""
+        contact = GbifPublishContact(
+            gbif_config=self.config,
+            organization_name="Freshwater Research Centre",
+            electronic_mail_address="fbis_gbif@frcsa.org.za",
+        )
+        snippet = eml_contact_from_model(contact)
+        self.assertNotIn("<individualName>", snippet)
+        self.assertIn("<organizationName>Freshwater Research Centre</organizationName>", snippet)
+        self.assertIn("<electronicMailAddress>fbis_gbif@frcsa.org.za</electronicMailAddress>", snippet)
+
+    def test_eml_contact_org_only_embedded_in_dwca(self):
+        """An org-only config contact must appear correctly in the generated eml.xml."""
+        source_reference = SourceReferenceF.create()
+        record = self._make_record(source_reference)
+        contact = _make_contact(
+            self.config,
+            individual_name_given="",
+            individual_name_sur="",
+            organization_name="Freshwater Research Centre",
+            electronic_mail_address="fbis_gbif@frcsa.org.za",
+        )
+        temp_dir = tempfile.mkdtemp()
+        self.addCleanup(lambda: shutil.rmtree(temp_dir, ignore_errors=True))
+
+        with override_settings(MEDIA_ROOT=temp_dir, MEDIA_URL="/media/"):
+            zip_path, _, _ = build_dwca(self.config, [record], [contact], source_reference)
+
+        eml = self._read_eml(zip_path)
+        self.assertIn("<organizationName>Freshwater Research Centre</organizationName>", eml)
+        self.assertIn("<electronicMailAddress>fbis_gbif@frcsa.org.za</electronicMailAddress>", eml)
+        # Must not contain an empty <individualName> block
+        self.assertNotIn("<individualName>\n  </individualName>", eml)
 
     def test_eml_contact_from_model_uses_resolved_fallback(self):
         user = UserF.create(first_name="Tom", last_name="Baker", email="tom@example.com")
