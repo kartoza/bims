@@ -69,7 +69,8 @@ class HarvestWormsSpeciesView(UserPassesTestMixin, LoginRequiredMixin, TemplateV
         if request.POST.get('cancel', 'False').lower() == 'true':
             try:
                 session = HarvestSession.objects.get(
-                    id=int(request.POST.get('canceled_session_id', ''))
+                    id=int(request.POST.get('canceled_session_id', '')),
+                    harvester=request.user,
                 )
                 session.canceled = True
                 session.save()
