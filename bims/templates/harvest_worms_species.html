@@ -1,0 +1,291 @@
+{% extends 'main_base.html' %}
+{% load static %}
+
+{% block subtitle %}Harvest WoRMS Species{% endblock %}
+
+{% block head %}
+    <link href="{% static "css/csv_uploader.css" %}" rel="stylesheet">
+    <style>
+        #log-container {
+            background-color: black !important;
+            color: white !important;
+            font-size: 10pt;
+        }
+        body {
+            background-image: none;
+        }
+        .aphia-help {
+            font-size: 10pt;
+            color: #6c757d;
+        }
+    </style>
+{% endblock %}
+
+{% block body_content %}
+
+    <div class="loading">Loading&#8230;</div>
+    <div class="container">
+        <div class="jumbotron csv-uploader-wrapper">
+
+            <div class="help-block-space"></div>
+            <h3>Harvest WoRMS Species</h3>
+            <p class="text-muted">
+                Fetches taxonomy from the
+                <a href="https://www.marinespecies.org" target="_blank" rel="noopener">
+                    World Register of Marine Species (WoRMS)
+                </a>
+                REST API and imports it into BIMS.
+            </p>
+
+            {% if messages %}
+                <div class="alert alert-warning" role="alert">
+                    {% for message in messages %}
+                        <div>{{ message }}</div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+
+            <div class="modal-body">
+            <form action="{{ request.path }}" method="post" id="worms-harvest-form" novalidate>
+                {% csrf_token %}
+
+                {% if not upload_session %}
+                <div class="help-block">
+                    <div class="help-block-space"></div>
+
+                    <!-- Taxon Group -->
+                    <div class="form-group row">
+                        <label for="taxon-group" class="col-sm-2 col-form-label"><b>Taxon Group</b></label>
+                        <div class="col-sm-10">
+                            <select class="form-control" name="taxon_group" id="taxon-group">
+                                <option value="" disabled selected>Choose a taxon group</option>
+                                {% for taxon_group in taxa_groups %}
+                                    <option value="{{ taxon_group.id }}">{{ taxon_group.name }}</option>
+                                {% endfor %}
+                            </select>
+                            <a href="/taxa-management" class="text-muted aphia-help">Link to taxa management</a>
+                        </div>
+                    </div>
+
+                    <!-- AphiaID -->
+                    <div class="form-group row" style="margin-top: 10px;">
+                        <label for="aphia-id" class="col-sm-2 col-form-label"><b>WoRMS AphiaID</b></label>
+                        <div class="col-sm-10">
+                            <input
+                                type="number"
+                                class="form-control"
+                                id="aphia-id"
+                                name="aphia_id"
+                                placeholder="e.g. 2 (Animalia), 11676 (Actinopterygii)"
+                                min="1"
+                                value="{{ request.POST.aphia_id }}"
+                            >
+                            <small class="aphia-help">
+                                Enter the AphiaID of the parent taxon to harvest from.
+                                Look it up at
+                                <a href="https://www.marinespecies.org/aphia.php?p=search" target="_blank" rel="noopener">
+                                    marinespecies.org
+                                </a>.
+                                The harvester will recursively import all accepted children.
+                            </small>
+                        </div>
+                    </div>
+
+                    <!-- Harvest synonyms -->
+{#                    <div class="form-group row" style="margin-top: 20px;">#}
+{#                        <label class="col-sm-2 col-form-label"></label>#}
+{#                        <div class="col-sm-10">#}
+{#                            <div class="form-check">#}
+{#                                <input#}
+{#                                    class="form-check-input"#}
+{#                                    type="checkbox"#}
+{#                                    id="harvest-synonyms"#}
+{#                                    name="harvest_synonyms_for_accepted"#}
+{#                                    value="1"#}
+{#                                    {% if request.POST.harvest_synonyms_for_accepted %}checked{% endif %}#}
+{#                                >#}
+{#                                <label class="form-check-label" for="harvest-synonyms">#}
+{#                                    Harvest synonyms for accepted taxa#}
+{#                                </label>#}
+{#                                <small class="form-text text-muted">#}
+{#                                    When checked, synonyms for each accepted taxon will also be imported.#}
+{#                                </small>#}
+{#                            </div>#}
+{#                        </div>#}
+{#                    </div>#}
+
+                    <div class="help-block-space"></div>
+
+                    <button class="btn btn-primary" type="submit" disabled id="harvesting-btn">
+                        Start harvesting
+                    </button>
+                </div>
+                {% endif %}
+
+            </form>
+
+            {# Active session #}
+            {% if upload_session %}
+                <div class="upload-progress-container">
+                    <h5>Current process:</h5>
+                    <div class="card">
+                        <div class="card-body">
+                            <h5 class="card-title">
+                                Module group: {{ upload_session.module_group.name }}
+                                {% if upload_session.aphia_id %}
+                                    &mdash; AphiaID {{ upload_session.aphia_id }}
+                                {% endif %}
+                            </h5>
+                            <div style="float: right; margin-top: -40px">
+                                {% if upload_session.module_group.logo %}
+                                    <img src="{{ upload_session.module_group.logo.url }}" width="40"/>
+                                {% endif %}
+                            </div>
+                            <p>Start time: {{ upload_session.start_time }}</p>
+                            <p class="card-text">
+                                Status: <span class="progress-text">
+                                    {% if upload_session.status %}{{ upload_session.status }}{% else %}Processing{% endif %}
+                                </span>
+                            </p>
+                            <div class="log">
+                                <textarea id="log-container" rows="10" style="width: 100%">{{ upload_session.log | safe }}</textarea>
+                            </div>
+                            <button class="btn btn-danger" data-toggle="modal" data-target="#cancelModal" data-id="{{ upload_session.id }}">
+                                Cancel
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            {% endif %}
+
+            {# Finished sessions #}
+            {% if finished_sessions %}
+                <div class="upload-progress-container">
+                    <h5>Finished harvest sessions:</h5>
+                    {% for session in finished_sessions %}
+                        <div class="card" style="margin-bottom: 10px;">
+                            <div class="card-body">
+                                <h5 class="card-title">
+                                    <a href="{{ session.log_file.url }}" class="btn btn-warning btn-sm">Download log</a>
+                                </h5>
+                                <div style="float: right; margin-top: -40px">
+                                    {% if session.module_group.logo %}
+                                        <img src="{{ session.module_group.logo.url }}" width="40"/>
+                                    {% endif %}
+                                </div>
+                                <p>
+                                    {{ session.module_group.name }}
+                                    {% with aid=session.additional_data %}
+                                        {% if aid.aphia_id %}&mdash; AphiaID {{ aid.aphia_id }}{% endif %}
+                                    {% endwith %}
+                                </p>
+                                <p>Started at {{ session.start_time }}</p>
+                                {% if session.canceled %}
+                                    <p style="color: red;">Canceled</p>
+                                {% else %}
+                                    <p class="card-text">
+                                        Result: {% if session.status %}{{ session.status }}{% else %}Finished{% endif %}
+                                    </p>
+                                {% endif %}
+                            </div>
+                        </div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+
+            </div>{# end modal-body #}
+        </div>
+    </div>
+
+    <!-- Cancel confirmation modal -->
+    <div class="modal fade" id="cancelModal" tabindex="-1" role="dialog"
+         aria-labelledby="cancelModalTitle" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="cancelModalTitle">Cancel session</h5>
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                        <span aria-hidden="true">&times;</span>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    Are you sure you want to cancel this harvest session?
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
+                    <button type="button" class="btn btn-danger" id="cancel-session">Cancel session</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+{% endblock %}
+
+{% block foot %}
+    <script src="{% static "js/libs/jquery/jquery-3.3.1.min.js" %}"></script>
+    <script src="{% static "js/libs/bootstrap-4.0.0/js/bootstrap.min.js" %}"></script>
+    <script type="text/javascript">
+
+        const updateUrl = '/api/harvest-status/';
+        const harvestSessionInProgress = {% if upload_session %}true{% else %}false{% endif %};
+        const harvestSessionId = {% if upload_session %}{{ upload_session.id }}{% else %}0{% endif %};
+        let currentSessionId = 0;
+
+        const updateProgress = (id, $elm) => {
+            setTimeout(function () {
+                $.get(updateUrl + id).then(function (response) {
+                    if (!response['finished']) {
+                        $elm.find('.progress-text').html(response['status'] || 'Processing');
+                        let $log = $('#log-container');
+                        $log.html(response['log']);
+                        if ($log.length) {
+                            $log.scrollTop($log[0].scrollHeight - $log.height());
+                        }
+                        updateProgress(id, $elm);
+                    } else {
+                        location.reload();
+                    }
+                });
+            }, 1000);
+        };
+
+        $(function () {
+            function checkEnableHarvesting() {
+                let taxonGroupId = $('#taxon-group').val();
+                let aphiaId = $('#aphia-id').val();
+                if (taxonGroupId && aphiaId && parseInt(aphiaId) > 0) {
+                    $('#harvesting-btn').prop('disabled', false);
+                } else {
+                    $('#harvesting-btn').prop('disabled', true);
+                }
+            }
+
+            $('#taxon-group').change(checkEnableHarvesting);
+            $('#aphia-id').on('input', checkEnableHarvesting);
+
+            // Scroll log to bottom on load
+            let textarea = document.getElementById('log-container');
+            if (textarea) {
+                textarea.scrollTop = textarea.scrollHeight;
+            }
+
+            // Start polling if a session is running
+            if (harvestSessionInProgress) {
+                updateProgress(harvestSessionId, $('.upload-progress-container'));
+            }
+
+            // Cancel button inside the modal
+            $('#cancel-session').click(function () {
+                let $form = $('#worms-harvest-form');
+                $form.append('<input type="hidden" name="cancel" value="True"/>');
+                $form.append('<input type="hidden" name="canceled_session_id" value="' + currentSessionId + '"/>');
+                $form.submit();
+            });
+
+            $('#cancelModal').on('shown.bs.modal', function (event) {
+                currentSessionId = $(event.relatedTarget).data('id');
+            });
+        });
+
+    </script>
+{% endblock %}

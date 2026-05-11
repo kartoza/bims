@@ -124,6 +124,13 @@ class AbstractTaxonomy(AbstractValidation):
         blank=True
     )
 
+    aphia_id = models.IntegerField(
+        verbose_name='WoRMS AphiaID',
+        null=True,
+        blank=True,
+        db_index=True,
+    )
+
     verified = models.BooleanField(
         help_text='The data has been verified',
         default=False

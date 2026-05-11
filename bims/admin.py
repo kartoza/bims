@@ -1597,6 +1597,7 @@ class TaxonomyAdmin(admin.ModelAdmin):
                 'species_group',
                 'gbif_key',
                 'fada_id',
+                'aphia_id',
                 'last_modified_by',
                 'subgenus',
                 'verified',

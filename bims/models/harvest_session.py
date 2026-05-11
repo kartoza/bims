@@ -20,6 +20,7 @@ class HarvestSession(models.Model):
     """
     CATEGORY_CHOICES = (
         ('gbif', 'GBIF'),
+        ('worms', 'WoRMS'),
     )
 
     harvester = models.ForeignKey(
