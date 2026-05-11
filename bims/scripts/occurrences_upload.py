@@ -694,26 +694,23 @@ class OccurrenceProcessor(object):
         # enrich log context with species for downstream logs
         self._set_row_ctx(species=species_name)
 
-        # Find existing taxonomy with ACCEPTED taxonomic status
-        self._log(logging.DEBUG, f"Lookup taxonomy rank={taxon_rank} name={species_name} group={self.module_group}")
+        self._log(logging.DEBUG,
+                  f"Lookup taxonomy rank={taxon_rank} name={species_name} group={self.module_group}")
         taxa = Taxonomy.objects.filter(
-            Q(canonical_name__iexact=species_name) |
-            Q(legacy_canonical_name__icontains=species_name),
+            canonical_name__iexact=species_name,
             rank=taxon_rank,
-            taxonomic_status="ACCEPTED",
             taxongroup=self.module_group
         )
         if not taxa.exists():
-            # Find existing taxonomy with any taxonomic status
             taxa = Taxonomy.objects.filter(
-                Q(canonical_name__iexact=species_name) |
-                Q(legacy_canonical_name__icontains=species_name),
+                legacy_canonical_name__icontains=species_name,
                 rank=taxon_rank,
                 taxongroup=self.module_group
             )
         if taxa.exists():
             taxonomy = taxa[0]
-            self._log(logging.DEBUG, f"Matched taxonomy id={taxonomy.id} status={taxonomy.taxonomic_status}")
+            self._log(logging.DEBUG,
+                      f"Matched taxonomy id={taxonomy.id} status={taxonomy.taxonomic_status}")
         else:
             self.handle_error(row=record, message="Taxonomy does not exist for this group")
             return None
