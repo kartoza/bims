@@ -24,6 +24,7 @@ from bims.tasks.taxon_group import delete_occurrences_by_taxon_group
 from bims.tasks.caches import reset_caches
 from bims.tasks.dataset import retrieve_datasets_from_gbif
 from bims.tasks.harvest_schedule import run_scheduled_gbif_harvest
+from bims.tasks.harvest_worms_species import harvest_worms_species
 from bims.tasks.gbif_publish import run_scheduled_gbif_publish
 from bims.tasks.prune_outside_boundary import prune_outside_boundary_gbif
 from bims.tasks.module_summary import generate_module_summary
