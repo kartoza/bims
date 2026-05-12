@@ -122,5 +122,28 @@ def taxonworks_record_to_additional_data(record: dict, base_url: str) -> dict:
     return extras
 
 
+def find_taxon_name_by_name(base_url: str, project_token: str,
+                            name: str) -> list[dict]:
+    """
+    Search taxon names by name string.
+    Returns a list of matching records, each containing at minimum ``id``,
+    ``cached`` (display name), and ``rank``.
+    """
+    url = f"{taxonworks_api_base_url(base_url)}/taxon_names"
+    params = {
+        "project_token": project_token,
+        "name": name,
+    }
+    try:
+        time.sleep(REQUEST_DELAY)
+        resp = _http.get(url, params=params, timeout=30)
+        resp.raise_for_status()
+        data = resp.json()
+        return data if isinstance(data, list) else []
+    except Exception as exc:
+        logger.warning("TaxonWorks find_taxon_name_by_name(%r) failed: %s", name, exc)
+        return []
+
+
 def taxon_name_url(base_url: str, taxon_name_id: int) -> str:
     return f"{normalize_taxonworks_base_url(base_url)}/taxon_names/{taxon_name_id}"

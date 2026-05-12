@@ -199,6 +199,120 @@ class TaxonWorksTaxaProcessor(TaxaProcessor):
             taxonomy.parent = parent
             taxonomy.save(update_fields=["parent"])
 
+    _GENUS_TRANSPARENT = frozenset({"SUBGENUS", "SUPERSPECIES"})
+
+    def _find_genus_ancestor(self, start: Taxonomy | None, _depth: int = 0) -> Taxonomy | None:
+        """
+        Walk up from *start*, passing through SUBGENUS and SUPERSPECIES
+        transparently.  Return the first GENUS found, or None.
+        """
+        cursor = start
+        while cursor and _depth < 10:
+            rank = (cursor.rank or "").upper()
+            if rank == "GENUS":
+                return cursor
+            if rank not in self._GENUS_TRANSPARENT:
+                return None
+            cursor = cursor.parent
+            _depth += 1
+        return None
+
+    def _get_or_create_genus(self, genus_name: str,
+                             above: Taxonomy | None = None) -> Taxonomy:
+        """
+        Return an existing GENUS taxonomy for *genus_name*, or create one.
+        """
+        genus = Taxonomy.objects.filter(
+            canonical_name__iexact=genus_name, rank="GENUS"
+        ).first()
+        if genus:
+            if above and not genus.parent_id:
+                genus.parent = above
+                genus.save(update_fields=["parent"])
+            return genus
+
+        from bims.utils.gbif import search_exact_match, get_species as gbif_get
+        try:
+            gbif_key = search_exact_match(genus_name)
+            if gbif_key:
+                gbif_data = gbif_get(gbif_key)
+                if gbif_data and (gbif_data.get("rank") or "").upper() == "GENUS":
+                    genus = Taxonomy.objects.filter(gbif_key=gbif_key).first()
+                    if not genus:
+                        genus = Taxonomy.objects.create(
+                            canonical_name=(gbif_data.get("canonicalName") or genus_name),
+                            scientific_name=(gbif_data.get("scientificName") or genus_name),
+                            legacy_canonical_name=(gbif_data.get("canonicalName") or genus_name),
+                            rank="GENUS",
+                            gbif_key=gbif_key,
+                            parent=above,
+                        )
+                    else:
+                        if above and not genus.parent_id:
+                            genus.parent = above
+                            genus.save(update_fields=["parent"])
+                    return genus
+        except Exception as exc:
+            logger.debug("GBIF genus lookup failed for %r: %s", genus_name, exc)
+
+        return Taxonomy.objects.create(
+            canonical_name=genus_name,
+            scientific_name=genus_name,
+            legacy_canonical_name=genus_name,
+            rank="GENUS",
+            parent=above,
+        )
+
+    def _validate_species_hierarchy(self, taxonomy: Taxonomy) -> None:
+        """
+        Enforce correct parent structure for SPECIES and SUBSPECIES.
+        """
+        rank = (taxonomy.rank or "").upper()
+
+        if rank == "SPECIES":
+            if self._find_genus_ancestor(taxonomy.parent):
+                return
+
+            parts = (taxonomy.canonical_name or "").split()
+            if not parts:
+                return
+            genus_name = parts[0]
+            genus = self._get_or_create_genus(genus_name, above=taxonomy.parent)
+            if taxonomy.parent_id != genus.id:
+                taxonomy.parent = genus
+                taxonomy.save(update_fields=["parent"])
+
+        elif rank == "SUBSPECIES":
+            parent = taxonomy.parent
+            if parent and (parent.rank or "").upper() == "SPECIES":
+                self._validate_species_hierarchy(parent)
+                return
+
+            parts = (taxonomy.canonical_name or "").split()
+            if len(parts) < 2:
+                return
+            species_name = " ".join(parts[:2])
+            genus_name = parts[0]
+
+            species = Taxonomy.objects.filter(
+                canonical_name__iexact=species_name, rank="SPECIES"
+            ).first()
+            if not species:
+                genus = self._get_or_create_genus(genus_name, above=taxonomy.parent)
+                species = Taxonomy.objects.create(
+                    canonical_name=species_name,
+                    scientific_name=species_name,
+                    legacy_canonical_name=species_name,
+                    rank="SPECIES",
+                    parent=genus,
+                )
+            else:
+                self._validate_species_hierarchy(species)
+
+            if taxonomy.parent_id != species.id:
+                taxonomy.parent = species
+                taxonomy.save(update_fields=["parent"])
+
     def _ensure_taxonomy(self, record: dict, _stack: set[int] | None = None) -> Taxonomy | None:
         record_id = int(record.get("id")) if record.get("id") else None
         _stack = _stack or set()
@@ -278,6 +392,8 @@ class TaxonWorksTaxaProcessor(TaxaProcessor):
 
         is_synonym = taxonomy.taxonomic_status == "SYNONYM"
         self._ensure_gbif_lineage(taxonomy, fill_parents=not is_synonym)
+        if not is_synonym:
+            self._validate_species_hierarchy(taxonomy)
 
         if record_id:
             self.taxonomies_by_taxonworks_id[record_id] = taxonomy

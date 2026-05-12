@@ -1,7 +1,7 @@
 # coding=utf-8
 import os
 from collections import deque
-from datetime import datetime
+from datetime import datetime, timezone as dt_timezone
 
 from django.conf import settings
 from django.contrib import messages
@@ -13,6 +13,37 @@ from django.http import HttpResponseRedirect
 from django.views.generic import TemplateView
 
 from bims.models.harvest_session import HarvestSession, HarvestTrigger
+
+
+def _format_duration(session) -> str:
+    """Return a human-readable duration string for a finished/canceled session."""
+    data = session.additional_data or {}
+    finished_at_str = data.get('finished_at')
+    start = session.start_time
+    if not start:
+        return ''
+    try:
+        if not finished_at_str:
+            return ''
+        from datetime import datetime as _dt
+        finished_at = _dt.fromisoformat(finished_at_str)
+        if finished_at.tzinfo is None:
+            finished_at = finished_at.replace(tzinfo=dt_timezone.utc)
+        if start.tzinfo is None:
+            start = start.replace(tzinfo=dt_timezone.utc)
+        delta = finished_at - start
+        total_seconds = int(delta.total_seconds())
+        if total_seconds < 0:
+            return ''
+        hours, remainder = divmod(total_seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        if hours:
+            return f'{hours}h {minutes}m {seconds}s'
+        if minutes:
+            return f'{minutes}m {seconds}s'
+        return f'{seconds}s'
+    except Exception:
+        return ''
 from bims.models.taxon_group import TaxonGroup
 from bims.tasks.harvest_taxonworks_species import harvest_taxonworks_species
 
@@ -61,6 +92,10 @@ class HarvestTaxonWorksSpeciesView(UserPassesTestMixin, LoginRequiredMixin, Temp
             harvester=self.request.user,
             category='taxonworks',
         ).order_by('-start_time')
+
+        for session in finished_sessions:
+            session.duration_display = _format_duration(session)
+
         ctx['finished_sessions'] = finished_sessions
 
         seen = set()

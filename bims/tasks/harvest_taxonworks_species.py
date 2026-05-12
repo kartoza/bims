@@ -180,6 +180,7 @@ def harvest_taxonworks_species(session_id: int, schema_name: str):
                 session.save(update_fields=["additional_data", "status"])
                 since_last_save = 0
 
+        finished_at = timezone.now().isoformat(timespec="seconds")
         final_additional_data = {
             **additional,
             "base_url": base_url,
@@ -188,6 +189,7 @@ def harvest_taxonworks_species(session_id: int, schema_name: str):
             "exclude_extinct": exclude_extinct,
             "processed_taxonworks_ids": list(processed_ids),
             "source_version_latest_updated_at": latest_updated_at,
+            "finished_at": finished_at,
         }
 
         if not HarvestSession.objects.filter(id=session_id, canceled=True).exists():

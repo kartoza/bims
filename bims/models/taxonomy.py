@@ -373,6 +373,48 @@ class AbstractTaxonomy(AbstractValidation):
             return _taxon
         return None
 
+    @staticmethod
+    def _specific_epithet_from_canonical(canonical_name: str) -> str:
+        """
+        Return the specific epithet from a (sub)species canonical name.
+
+        Strips leading genus and any subgenus token in parentheses:
+          "Peltoperla (Peltoperla) anna"  → "anna"
+          "Homo sapiens"                  → "sapiens"
+          "Canis lupus familiaris"        → "lupus familiaris"  (subspecies)
+        """
+        tokens = (canonical_name or '').split()
+        # Keep only tokens that are not a parenthetical subgenus group
+        meaningful = [t for t in tokens
+                      if not (t.startswith('(') and t.endswith(')'))]
+        # Everything after the first (genus) token is the epithet part
+        if len(meaningful) >= 2:
+            return ' '.join(meaningful[1:])
+        return canonical_name or ''
+
+    @staticmethod
+    def _genus_prefix_from_canonical(canonical_name: str) -> str:
+        """
+        Return the genus (+ subgenus) prefix from a species canonical name.
+
+        Finds the last non-parenthetical token (the epithet) and returns
+        everything that precedes it:
+          "Peltoperla (Peltoperla) anna"  → "Peltoperla (Peltoperla)"
+          "Homo sapiens"                  → "Homo"
+        Returns '' when the name has only one meaningful word.
+        """
+        tokens = (canonical_name or '').split()
+        meaningful = [t for t in tokens
+                      if not (t.startswith('(') and t.endswith(')'))]
+        if len(meaningful) < 2:
+            return ''
+        epithet = meaningful[-1]
+        # Locate the epithet from the right of the original token list
+        for i in range(len(tokens) - 1, -1, -1):
+            if tokens[i] == epithet:
+                return ' '.join(tokens[:i]).strip()
+        return tokens[0] if tokens else ''
+
     def _get_rank_name_from_canonical(self, rank):
         """Infer a higher-rank name from the canon when parents disagree."""
         canonical = (self.canonical_name or '').strip()
@@ -397,6 +439,18 @@ class AbstractTaxonomy(AbstractValidation):
         tokens = canonical.split()
         if not tokens:
             return ''
+
+        if rank_name == TaxonomicRank.GENUS.name:
+            # For GENUS, preserve subgenus notation: "Peltoperla (Peltoperla) anna"
+            # → "Peltoperla (Peltoperla)"
+            prefix = self._genus_prefix_from_canonical(canonical)
+            if prefix:
+                return prefix
+            return tokens[0]
+
+        if rank_name == TaxonomicRank.SPECIES.name:
+            # Return only the specific epithet, not the full binomial.
+            return self._specific_epithet_from_canonical(canonical)
 
         markers = {
             'sp', 'spp', 'subsp', 'ssp', 'var', 'subvar', 'forma',
@@ -423,6 +477,7 @@ class AbstractTaxonomy(AbstractValidation):
         current_try = 0
 
         target_rank = rank.name if isinstance(rank, TaxonomicRank) else rank
+        _rank = self.rank
 
         status = (self.taxonomic_status or '').upper()
         is_synonym_or_doubtful = (
@@ -444,7 +499,10 @@ class AbstractTaxonomy(AbstractValidation):
             _taxon = self
 
         _parent = _taxon.parent if _taxon.parent else None
-        _rank = _taxon.rank
+        _species_canonical = (
+            _taxon.canonical_name
+            if _rank in ('SPECIES', 'SUBSPECIES') else None
+        )
 
         while (
                 _parent and _rank
@@ -452,11 +510,19 @@ class AbstractTaxonomy(AbstractValidation):
                 and current_try < limit
         ):
             current_try += 1
+            if _rank in ('SPECIES', 'SUBSPECIES') and _species_canonical is None:
+                _species_canonical = _taxon.canonical_name
             _taxon = _parent
             _rank = _taxon.rank
             _parent = _taxon.parent if _taxon.parent else None
 
         if _rank == target_rank:
+            if target_rank == 'SPECIES':
+                return self._specific_epithet_from_canonical(_taxon.canonical_name)
+            if target_rank == 'GENUS' and _species_canonical:
+                prefix = self._genus_prefix_from_canonical(_species_canonical)
+                if prefix:
+                    return prefix
             return _taxon.canonical_name
         return ''
 
@@ -810,6 +876,7 @@ class Taxonomy(AbstractTaxonomy):
         family_idx = rank_order.index(TaxonomicRank.FAMILY.name)
         genus_idx = rank_order.index(TaxonomicRank.GENUS.name)
         species_idx = rank_order.index(TaxonomicRank.SPECIES.name)
+        genus_name = ''
 
         if self.gbif_data:
             self.gbif_data = self.save_json_data(self.gbif_data)
@@ -833,7 +900,7 @@ class Taxonomy(AbstractTaxonomy):
         elif ('family_name' not in self.hierarchical_data or not self.hierarchical_data['family_name']) and cur_idx and cur_idx >= family_idx:
             self.hierarchical_data['family_name'] = self.get_taxon_rank_name(TaxonomicRank.FAMILY.name)
         elif ('genus_name' not in self.hierarchical_data or not self.hierarchical_data['genus_name']) and cur_idx and cur_idx >= genus_idx:
-            self.hierarchical_data['genus_name'] = self.get_taxon_rank_name(TaxonomicRank.GENUS.name)
+            self.hierarchical_data['genus_name'] = genus_name
         elif ('species_name' not in self.hierarchical_data or not self.hierarchical_data['species_name']) and cur_idx and cur_idx >= species_idx:
             self.hierarchical_data['species_name'] = species_name
 

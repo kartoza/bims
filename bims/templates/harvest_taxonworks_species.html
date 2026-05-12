@@ -106,8 +106,27 @@
                                        placeholder="e.g. 998323 for Plecoptera" min="1"
                                        value="{{ request.POST.taxon_name_id }}">
                                 <small class="source-help">
-                                    Enter the TaxonWorks root taxon name ID to harvest from.
+                                    Enter the TaxonWorks root taxon name ID, or search by name below.
                                 </small>
+                            </div>
+                        </div>
+
+                        <div class="form-group row" style="margin-top: 6px;">
+                            <label class="col-sm-2 col-form-label text-muted" style="font-size:10pt;">Search name</label>
+                            <div class="col-sm-10">
+                                <div class="input-group">
+                                    <input type="text" class="form-control" id="taxon-name-search"
+                                           placeholder="e.g. Plecoptera">
+                                    <div class="input-group-append">
+                                        <button class="btn btn-outline-secondary" type="button" id="taxon-name-search-btn">
+                                            Search
+                                        </button>
+                                    </div>
+                                </div>
+                                <div id="taxon-name-search-results" style="display:none; margin-top:6px;">
+                                    <ul class="list-group" id="taxon-name-result-list"></ul>
+                                </div>
+                                <small id="taxon-name-search-status" class="source-help"></small>
                             </div>
                         </div>
 
@@ -176,6 +195,9 @@
                                         {% endwith %}
                                     </p>
                                     <p>Started at {{ session.start_time }}</p>
+                                    {% if session.duration_display %}
+                                        <p>Duration: {{ session.duration_display }}</p>
+                                    {% endif %}
                                     {% if session.canceled %}
                                         <p style="color: red;">Canceled</p>
                                     {% else %}
@@ -257,6 +279,55 @@
             $('#taxon-group').change(checkEnableHarvesting);
             $('#base-url, #project-token, #taxon-name-id').on('input', checkEnableHarvesting);
             checkEnableHarvesting();
+
+            // Taxon name search
+            function doTaxonNameSearch() {
+                const baseUrl = $('#base-url').val().trim();
+                const projectToken = $('#project-token').val().trim();
+                const name = $('#taxon-name-search').val().trim();
+                if (!baseUrl || !projectToken || !name) {
+                    $('#taxon-name-search-status').text('Please fill in Base URL, Project Token and a search name first.');
+                    return;
+                }
+                $('#taxon-name-search-status').text('Searching…');
+                $('#taxon-name-search-results').hide();
+                $('#taxon-name-result-list').empty();
+                $.get('/api/taxonworks-name-search/', {
+                    base_url: baseUrl,
+                    project_token: projectToken,
+                    name: name
+                }).done(function (data) {
+                    const results = data.results || [];
+                    if (!results.length) {
+                        $('#taxon-name-search-status').text('No results found.');
+                        return;
+                    }
+                    $('#taxon-name-search-status').text('');
+                    results.forEach(function (r) {
+                        const label = r.name + (r.rank ? ' (' + r.rank + ')' : '') + ' — ID ' + r.id;
+                        const badge = r.valid
+                            ? '<span class="badge badge-success" style="margin-left:6px;">accepted</span>'
+                            : '<span class="badge badge-secondary" style="margin-left:6px;">synonym</span>';
+                        const $li = $('<li class="list-group-item list-group-item-action" style="cursor:pointer;padding:6px 10px;font-size:10pt;"></li>')
+                            .html(label + badge)
+                            .on('click', function () {
+                                $('#taxon-name-id').val(r.id);
+                                $('#taxon-name-result-list li').removeClass('active');
+                                $(this).addClass('active');
+                                checkEnableHarvesting();
+                            });
+                        $('#taxon-name-result-list').append($li);
+                    });
+                    $('#taxon-name-search-results').show();
+                }).fail(function () {
+                    $('#taxon-name-search-status').text('Search failed. Check Base URL and Project Token.');
+                });
+            }
+
+            $('#taxon-name-search-btn').on('click', doTaxonNameSearch);
+            $('#taxon-name-search').on('keydown', function (e) {
+                if (e.key === 'Enter') { e.preventDefault(); doTaxonNameSearch(); }
+            });
 
             $('#previous-config').change(function () {
                 const $opt = $(this).find('option:selected');

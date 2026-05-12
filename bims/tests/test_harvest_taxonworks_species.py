@@ -360,3 +360,203 @@ class TestTaxonWorksGbifLineage(FastTenantTestCase):
         taxonomy.refresh_from_db()
         self.assertIsNotNone(taxonomy.parent)
         self.assertEqual(taxonomy.parent.rank, 'ORDER')
+
+
+# ---------------------------------------------------------------------------
+# TaxonWorksTaxaProcessor — species / subspecies hierarchy validation
+# ---------------------------------------------------------------------------
+
+_NO_GBIF_SEARCH = 'bims.scripts.taxa_upload_taxonworks.search_exact_match'
+_NO_GBIF_GET = 'bims.scripts.taxa_upload_taxonworks.get_species'
+
+
+class TestSpeciesHierarchyValidation(FastTenantTestCase):
+
+    def setUp(self):
+        self.taxon_group = TaxonGroupF.create()
+
+    def _proc(self):
+        return TaxonWorksTaxaProcessor(
+            base_url='https://sfg.taxonworks.org',
+            project_token='tok',
+        )
+
+    def _species(self, name, parent=None):
+        return Taxonomy.objects.create(
+            canonical_name=name, scientific_name=name,
+            legacy_canonical_name=name, rank='SPECIES', parent=parent,
+        )
+
+    def _genus(self, name, parent=None):
+        return Taxonomy.objects.create(
+            canonical_name=name, scientific_name=name,
+            legacy_canonical_name=name, rank='GENUS', parent=parent,
+        )
+
+    # -- _find_genus_ancestor -----------------------------------------------
+
+    def test_find_genus_direct_parent(self):
+        genus = self._genus('Homo')
+        species = self._species('Homo sapiens', parent=genus)
+        proc = self._proc()
+        self.assertEqual(proc._find_genus_ancestor(species.parent), genus)
+
+    def test_find_genus_through_subgenus(self):
+        genus = self._genus('Homo')
+        subgenus = Taxonomy.objects.create(
+            canonical_name='Homo (Homo)', scientific_name='Homo (Homo)',
+            legacy_canonical_name='Homo (Homo)', rank='SUBGENUS', parent=genus,
+        )
+        species = self._species('Homo sapiens', parent=subgenus)
+        proc = self._proc()
+        self.assertEqual(proc._find_genus_ancestor(species.parent), genus)
+
+    def test_find_genus_through_superspecies(self):
+        genus = self._genus('Canis')
+        supersp = Taxonomy.objects.create(
+            canonical_name='Canis lupus group', scientific_name='Canis lupus group',
+            legacy_canonical_name='Canis lupus group', rank='SUPERSPECIES', parent=genus,
+        )
+        species = self._species('Canis lupus', parent=supersp)
+        proc = self._proc()
+        self.assertEqual(proc._find_genus_ancestor(species.parent), genus)
+
+    def test_find_genus_returns_none_for_family_parent(self):
+        family = Taxonomy.objects.create(
+            canonical_name='Hominidae', scientific_name='Hominidae',
+            legacy_canonical_name='Hominidae', rank='FAMILY',
+        )
+        species = self._species('Homo sapiens', parent=family)
+        proc = self._proc()
+        self.assertIsNone(proc._find_genus_ancestor(species.parent))
+
+    # -- _get_or_create_genus -----------------------------------------------
+
+    def test_get_or_create_genus_reuses_existing(self):
+        existing = self._genus('Felis')
+        proc = self._proc()
+        result = proc._get_or_create_genus('Felis')
+        self.assertEqual(result.id, existing.id)
+        self.assertEqual(Taxonomy.objects.filter(canonical_name='Felis', rank='GENUS').count(), 1)
+
+    @mock.patch('bims.utils.gbif.get_species')
+    @mock.patch('bims.utils.gbif.search_exact_match')
+    def test_get_or_create_genus_uses_gbif(self, mock_search, mock_get):
+        mock_search.return_value = 42
+        mock_get.return_value = {
+            'key': 42, 'rank': 'GENUS',
+            'canonicalName': 'Panthera', 'scientificName': 'Panthera Oken, 1816',
+        }
+        proc = self._proc()
+        genus = proc._get_or_create_genus('Panthera')
+        self.assertEqual(genus.rank, 'GENUS')
+        self.assertEqual(genus.canonical_name, 'Panthera')
+        self.assertEqual(genus.gbif_key, 42)
+
+    @mock.patch('bims.utils.gbif.get_species')
+    @mock.patch('bims.utils.gbif.search_exact_match')
+    def test_get_or_create_genus_stub_when_no_gbif(self, mock_search, mock_get):
+        mock_search.return_value = None
+        proc = self._proc()
+        genus = proc._get_or_create_genus('UnknownGenus')
+        self.assertEqual(genus.rank, 'GENUS')
+        self.assertEqual(genus.canonical_name, 'UnknownGenus')
+        mock_get.assert_not_called()
+
+    # -- _validate_species_hierarchy: SPECIES --------------------------------
+
+    @mock.patch('bims.utils.gbif.get_species')
+    @mock.patch('bims.utils.gbif.search_exact_match')
+    def test_species_with_genus_parent_unchanged(self, mock_search, mock_get):
+        genus = self._genus('Aquila')
+        species = self._species('Aquila chrysaetos', parent=genus)
+        proc = self._proc()
+        proc._validate_species_hierarchy(species)
+        species.refresh_from_db()
+        self.assertEqual(species.parent_id, genus.id)
+        mock_search.assert_not_called()
+
+    @mock.patch('bims.utils.gbif.get_species')
+    @mock.patch('bims.utils.gbif.search_exact_match')
+    def test_species_under_family_gets_genus_inserted(self, mock_search, mock_get):
+        """Species directly under Family → a Genus must be inserted."""
+        mock_search.return_value = None  # force stub creation
+        family = Taxonomy.objects.create(
+            canonical_name='Accipitridae', scientific_name='Accipitridae',
+            legacy_canonical_name='Accipitridae', rank='FAMILY',
+        )
+        species = self._species('Aquila chrysaetos', parent=family)
+        proc = self._proc()
+        proc._validate_species_hierarchy(species)
+        species.refresh_from_db()
+        self.assertEqual(species.parent.rank, 'GENUS')
+        self.assertEqual(species.parent.canonical_name, 'Aquila')
+        # genus should be placed above family
+        self.assertEqual(species.parent.parent_id, family.id)
+
+    @mock.patch('bims.utils.gbif.get_species')
+    @mock.patch('bims.utils.gbif.search_exact_match')
+    def test_species_with_no_parent_creates_genus(self, mock_search, mock_get):
+        mock_search.return_value = None
+        species = self._species('Canis lupus')
+        proc = self._proc()
+        proc._validate_species_hierarchy(species)
+        species.refresh_from_db()
+        self.assertEqual(species.parent.rank, 'GENUS')
+        self.assertEqual(species.parent.canonical_name, 'Canis')
+
+    # -- _validate_species_hierarchy: SUBSPECIES -----------------------------
+
+    @mock.patch('bims.utils.gbif.get_species')
+    @mock.patch('bims.utils.gbif.search_exact_match')
+    def test_subspecies_with_correct_chain_unchanged(self, mock_search, mock_get):
+        genus = self._genus('Canis')
+        species = self._species('Canis lupus', parent=genus)
+        subsp = Taxonomy.objects.create(
+            canonical_name='Canis lupus familiaris',
+            scientific_name='Canis lupus familiaris',
+            legacy_canonical_name='Canis lupus familiaris',
+            rank='SUBSPECIES', parent=species,
+        )
+        proc = self._proc()
+        proc._validate_species_hierarchy(subsp)
+        subsp.refresh_from_db()
+        self.assertEqual(subsp.parent_id, species.id)
+        mock_search.assert_not_called()
+
+    @mock.patch('bims.utils.gbif.get_species')
+    @mock.patch('bims.utils.gbif.search_exact_match')
+    def test_subspecies_under_genus_creates_species(self, mock_search, mock_get):
+        """Subspecies directly under Genus → a Species must be inserted."""
+        mock_search.return_value = None
+        genus = self._genus('Canis')
+        subsp = Taxonomy.objects.create(
+            canonical_name='Canis lupus familiaris',
+            scientific_name='Canis lupus familiaris',
+            legacy_canonical_name='Canis lupus familiaris',
+            rank='SUBSPECIES', parent=genus,
+        )
+        proc = self._proc()
+        proc._validate_species_hierarchy(subsp)
+        subsp.refresh_from_db()
+        self.assertEqual(subsp.parent.rank, 'SPECIES')
+        self.assertEqual(subsp.parent.canonical_name, 'Canis lupus')
+        self.assertEqual(subsp.parent.parent_id, genus.id)
+
+    @mock.patch('bims.utils.gbif.get_species')
+    @mock.patch('bims.utils.gbif.search_exact_match')
+    def test_subspecies_with_no_parent_creates_species_and_genus(self, mock_search, mock_get):
+        mock_search.return_value = None
+        subsp = Taxonomy.objects.create(
+            canonical_name='Homo sapiens neanderthalensis',
+            scientific_name='Homo sapiens neanderthalensis',
+            legacy_canonical_name='Homo sapiens neanderthalensis',
+            rank='SUBSPECIES',
+        )
+        proc = self._proc()
+        proc._validate_species_hierarchy(subsp)
+        subsp.refresh_from_db()
+        self.assertEqual(subsp.parent.rank, 'SPECIES')
+        self.assertEqual(subsp.parent.canonical_name, 'Homo sapiens')
+        self.assertEqual(subsp.parent.parent.rank, 'GENUS')
+        self.assertEqual(subsp.parent.parent.canonical_name, 'Homo')
