@@ -98,6 +98,7 @@ from bims.views.physico_chemical import PhysicoChemicalView, \
     PhysicoChemicalSiteView
 from bims.views.harvest_gbif_species import HarvestGbifSpeciesView
 from bims.views.harvest_worms_species import HarvestWormsSpeciesView
+from bims.views.harvest_taxonworks_species import HarvestTaxonWorksSpeciesView
 from bims.views.layer_upload import (
     BoundaryUploadView,
     UserBoundaryUploadView
@@ -224,6 +225,7 @@ urlpatterns = [
             name='harvest-collections'),
     path('harvest-species/', HarvestGbifSpeciesView.as_view(), name='harvest-gbif-species'),
     path('harvest-worms/', HarvestWormsSpeciesView.as_view(), name='harvest-worms-species'),
+    path('harvest-taxonworks/', HarvestTaxonWorksSpeciesView.as_view(), name='harvest-taxonworks-species'),
     re_path(r'^source-references/$', SourceReferenceListView.as_view(),
             name='source-references'),
     re_path(r'^delete-source-reference/$', DeleteSourceReferenceView.as_view(),

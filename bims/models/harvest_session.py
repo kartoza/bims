@@ -21,6 +21,7 @@ class HarvestSession(models.Model):
     CATEGORY_CHOICES = (
         ('gbif', 'GBIF'),
         ('worms', 'WoRMS'),
+        ('taxonworks', 'TaxonWorks'),
     )
 
     harvester = models.ForeignKey(
