@@ -6,14 +6,10 @@ import logging
 from django.db import transaction
 from preferences import preferences
 
-from bims.models import SourceReference, Taxonomy
+from bims.models import Taxonomy
 from bims.scripts.taxa_upload import TaxaProcessor
 from bims.utils.fetch_gbif import harvest_synonyms_for_accepted_taxonomy
-from bims.utils.taxonworks import (
-    get_taxon_name,
-    taxon_name_url,
-    taxonworks_record_to_additional_data,
-)
+from bims.utils.taxonworks import get_taxon_name, taxonworks_record_to_additional_data
 
 logger = logging.getLogger("bims")
 
@@ -378,13 +374,6 @@ class TaxonWorksTaxaProcessor(TaxaProcessor):
             if accepted_record:
                 accepted_taxonomy = self._ensure_taxonomy(accepted_record, _stack=_stack)
         taxonomy.accepted_taxonomy = accepted_taxonomy
-
-        if self.base_url and record.get("id"):
-            taxonomy.source_reference = SourceReference.create_source_reference(
-                category=None,
-                source_id=None,
-                note=f"TaxonWorks source: {taxon_name_url(self.base_url, int(record['id']))}",
-            )
 
         taxonomy.additional_data = taxonworks_record_to_additional_data(record, self.base_url or "")
         taxonomy.save()
