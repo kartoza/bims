@@ -46,14 +46,6 @@ class TaxonWorksTaxaProcessor(TaxaProcessor):
         pass
 
     def _infer_rank(self, record: dict) -> str | None:
-        valid_id = record.get("cached_valid_taxon_name_id")
-        record_id = record.get("id")
-        if valid_id and record_id and int(valid_id) != int(record_id):
-            accepted_record = self._fetch_record(int(valid_id))
-            accepted_rank = ((accepted_record or {}).get("rank") or "").strip().upper() or None
-            if accepted_rank:
-                return accepted_rank
-
         cached = (record.get("cached") or "").strip()
         if not cached:
             return None
@@ -63,6 +55,13 @@ class TaxonWorksTaxaProcessor(TaxaProcessor):
         if token_count == 2:
             return "SPECIES"
         if token_count == 1:
+            valid_id = record.get("cached_valid_taxon_name_id")
+            record_id = record.get("id")
+            if valid_id and record_id and int(valid_id) != int(record_id):
+                accepted_record = self._fetch_record(int(valid_id))
+                accepted_rank = ((accepted_record or {}).get("rank") or "").strip().upper() or None
+                if accepted_rank:
+                    return accepted_rank
             parent_record = self._fetch_record(record.get("parent_id"))
             parent_rank = ((parent_record or {}).get("rank") or "").strip().upper() or None
             if parent_rank == "FAMILY":

@@ -14,8 +14,8 @@ from bims.tests.model_factories import TaxonGroupF, UserF
 _PATCH_DISCONNECT = 'bims.signals.utils.disconnect_bims_signals'
 _PATCH_CONNECT = 'bims.signals.utils.connect_bims_signals'
 _PATCH_PREFS = 'bims.scripts.taxa_upload_taxonworks.preferences'
-_PATCH_ROOT = 'bims.utils.taxonworks.get_taxon_name'
-_PATCH_ALL = 'bims.utils.taxonworks.get_all_taxon_names'
+_PATCH_HTTP_GET = 'bims.utils.taxonworks._http.get'
+_PATCH_SLEEP = 'bims.utils.taxonworks.time.sleep'
 
 
 def _record(taxon_id, name, rank, parent_id=None, valid=True,
@@ -43,6 +43,92 @@ def _record(taxon_id, name, rank, parent_id=None, valid=True,
 
 
 class TestHarvestTaxonWorksSpeciesTask(FastTenantTestCase):
+    SAMPLE_PAGE_1 = [
+        {
+            "id": 909313, "name": "Root", "parent_id": None,
+            "cached": "Root", "cached_html": "Root",
+            "feminine_name": None, "masculine_name": None,
+            "nomenclatural_code": None, "neuter_name": None,
+            "etymology": None, "year_of_publication": None,
+            "verbatim_author": None, "rank": "nomenclatural rank",
+            "rank_string": "NomenclaturalRank", "type": "Protonym",
+            "project_id": 55, "cached_valid_taxon_name_id": 909313,
+            "cached_original_combination": None,
+            "cached_original_combination_html": None,
+            "cached_author": None, "cached_author_year": None,
+            "cached_misspelling": None, "cached_is_available": True,
+            "cached_gender": None, "cached_secondary_homonym": None,
+            "cached_primary_homonym": "Root", "cached_is_valid": True,
+            "created_at": "2023-08-26T00:14:29.157Z",
+            "updated_at": "2023-08-26T00:14:29.157Z",
+            "verbatim_name": None, "year": None, "name_string": "Root",
+            "original_combination": None
+        },
+        {
+            "id": 909335, "name": "Animalia", "parent_id": 909313,
+            "cached": "Animalia", "cached_html": "Animalia",
+            "feminine_name": None, "masculine_name": None,
+            "nomenclatural_code": "iczn", "neuter_name": None,
+            "etymology": None, "year_of_publication": None,
+            "verbatim_author": None, "rank": "kingdom",
+            "rank_string": "NomenclaturalRank::Iczn::HigherClassificationGroup::Kingdom",
+            "type": "Protonym", "project_id": 55,
+            "cached_valid_taxon_name_id": 909335,
+            "cached_original_combination": None,
+            "cached_original_combination_html": None,
+            "cached_author": "", "cached_author_year": None,
+            "cached_misspelling": None, "cached_is_available": True,
+            "cached_gender": None, "cached_secondary_homonym": None,
+            "cached_primary_homonym": "Animalia", "cached_is_valid": True,
+            "created_at": "2023-08-26T05:26:00.656Z",
+            "updated_at": "2023-08-26T05:26:00.656Z",
+            "verbatim_name": None, "year": None, "name_string": "Animalia",
+            "original_combination": None
+        },
+        {
+            "id": 998313, "name": "Osmylites", "parent_id": 909335,
+            "cached": "Osmylites", "cached_html": "<i>Osmylites</i>",
+            "feminine_name": None, "masculine_name": None,
+            "nomenclatural_code": "iczn", "neuter_name": None,
+            "etymology": None, "year_of_publication": None,
+            "verbatim_author": None, "rank": "genus",
+            "rank_string": "NomenclaturalRank::Iczn::GenusGroup::Genus",
+            "type": "Protonym", "project_id": 55,
+            "cached_valid_taxon_name_id": 998313,
+            "cached_original_combination": None,
+            "cached_original_combination_html": None,
+            "cached_author": "", "cached_author_year": None,
+            "cached_misspelling": None, "cached_is_available": True,
+            "cached_gender": None, "cached_secondary_homonym": None,
+            "cached_primary_homonym": "Osmylites", "cached_is_valid": True,
+            "created_at": "2013-03-12T16:32:00.000Z",
+            "updated_at": "2014-03-07T10:53:00.000Z",
+            "verbatim_name": None, "year": None, "name_string": "Osmylites",
+            "original_combination": None
+        },
+        {
+            "id": 998314, "name": "Sinoephemera", "parent_id": 909335,
+            "cached": "Sinoephemera", "cached_html": "<i>Sinoephemera</i>",
+            "feminine_name": None, "masculine_name": None,
+            "nomenclatural_code": "iczn", "neuter_name": None,
+            "etymology": None, "year_of_publication": None,
+            "verbatim_author": None, "rank": "genus",
+            "rank_string": "NomenclaturalRank::Iczn::GenusGroup::Genus",
+            "type": "Protonym", "project_id": 55,
+            "cached_valid_taxon_name_id": 998314,
+            "cached_original_combination": None,
+            "cached_original_combination_html": None,
+            "cached_author": "", "cached_author_year": None,
+            "cached_misspelling": None, "cached_is_available": True,
+            "cached_gender": None, "cached_secondary_homonym": None,
+            "cached_primary_homonym": "Sinoephemera", "cached_is_valid": True,
+            "created_at": "2013-03-12T16:32:00.000Z",
+            "updated_at": "2014-03-07T10:53:00.000Z",
+            "verbatim_name": None, "year": None, "name_string": "Sinoephemera",
+            "original_combination": None
+        },
+    ]
+
     def setUp(self):
         self.taxon_group = TaxonGroupF.create()
         self.user = UserF.create()
@@ -50,7 +136,7 @@ class TestHarvestTaxonWorksSpeciesTask(FastTenantTestCase):
 
     def _make_session(self, additional=None):
         data = additional if additional is not None else {
-            'base_url': 'https://sfg.taxonworks.org',
+            'base_url': 'https://test.taxonworks.org',
             'project_token': 'token',
             'taxon_name_id': 100,
             'exclude_extinct': True,
@@ -67,43 +153,85 @@ class TestHarvestTaxonWorksSpeciesTask(FastTenantTestCase):
         )
         return session
 
+    class _MockResponse:
+        def __init__(self, payload, status_code=200):
+            self._payload = payload
+            self.status_code = status_code
+
+        def json(self):
+            return self._payload
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise RuntimeError(f'HTTP {self.status_code}')
+
+    def _mock_http_get(self, page_payload, root_payload=None, extra_records=None):
+        root_payload = root_payload or page_payload[0]
+        extra_records = extra_records or {}
+        page_lookup = {record['id']: record for record in page_payload}
+        page_lookup.update(extra_records)
+
+        def _side_effect(url, params=None, timeout=None):
+            params = params or {}
+            if '/taxon_names/' in url:
+                taxon_id = int(url.rstrip('/').split('/')[-1])
+                if taxon_id == root_payload['id']:
+                    return self._MockResponse(root_payload)
+                payload = page_lookup.get(taxon_id)
+                if payload is None:
+                    return self._MockResponse({}, status_code=404)
+                return self._MockResponse(payload)
+
+            page = int(params.get('page', 1))
+            if page == 1:
+                return self._MockResponse(page_payload)
+            return self._MockResponse([])
+
+        return _side_effect
+
     @mock.patch(_PATCH_PREFS)
-    @mock.patch(_PATCH_ALL)
-    @mock.patch(_PATCH_ROOT)
+    @mock.patch(_PATCH_SLEEP, return_value=None)
+    @mock.patch(_PATCH_HTTP_GET)
     @mock.patch(_PATCH_CONNECT)
     @mock.patch(_PATCH_DISCONNECT)
     def test_session_marked_finished(
-        self, mock_dis, mock_con, mock_root, mock_all, mock_prefs
+        self, mock_dis, mock_con, mock_http_get, mock_sleep, mock_prefs
     ):
         mock_prefs.SiteSetting.auto_validate_taxa_on_upload = True
-        root = _record(100, 'Plecoptera', 'order', parent_id=10, author='Burmeister, 1839')
-        mock_root.return_value = root
-        mock_all.return_value = [root]
+        sample_page = list(self.SAMPLE_PAGE_1)
+        root = sample_page[1]
+        mock_http_get.side_effect = self._mock_http_get(sample_page, root_payload=root)
 
-        session = self._make_session()
+        session = self._make_session({
+            'base_url': 'https://test.taxonworks.org',
+            'project_token': 'token',
+            'taxon_name_id': 909335,
+            'exclude_extinct': True,
+        })
         harvest_taxonworks_species(session.id, schema_name=self.schema_name)
 
         session.refresh_from_db()
         self.assertTrue(session.finished)
         self.assertIn('Finished', session.status)
-        taxon = Taxonomy.objects.get(canonical_name='Plecoptera', rank='ORDER')
-        self.assertEqual(taxon.additional_data['_taxonworks_taxon_name_id'], 100)
+        taxon = Taxonomy.objects.get(canonical_name='Animalia', rank='KINGDOM')
+        self.assertEqual(taxon.additional_data['_taxonworks_taxon_name_id'], 909335)
+        self.assertTrue(Taxonomy.objects.filter(canonical_name='Osmylites', rank='GENUS').exists())
 
     @mock.patch(_PATCH_PREFS)
-    @mock.patch(_PATCH_ALL)
-    @mock.patch(_PATCH_ROOT)
+    @mock.patch(_PATCH_SLEEP, return_value=None)
+    @mock.patch(_PATCH_HTTP_GET)
     @mock.patch(_PATCH_CONNECT)
     @mock.patch(_PATCH_DISCONNECT)
     def test_descendants_processed_and_extinct_skipped(
-        self, mock_dis, mock_con, mock_root, mock_all, mock_prefs
+        self, mock_dis, mock_con, mock_http_get, mock_sleep, mock_prefs
     ):
         mock_prefs.SiteSetting.auto_validate_taxa_on_upload = True
         root = _record(100, 'Plecoptera', 'order', parent_id=10)
         family = _record(101, 'Perlidae', 'family', parent_id=100)
         extinct_genus = _record(102, 'Thaumatophora', 'genus', parent_id=100, extinct=True)
         species = _record(103, 'Perla marginata', 'species', parent_id=101)
-        mock_root.return_value = root
-        mock_all.return_value = [root, family, extinct_genus, species]
+        sample_page = [root, family, extinct_genus, species]
+        mock_http_get.side_effect = self._mock_http_get(sample_page, root_payload=root)
 
         session = self._make_session()
         harvest_taxonworks_species(session.id, schema_name=self.schema_name)
@@ -113,12 +241,12 @@ class TestHarvestTaxonWorksSpeciesTask(FastTenantTestCase):
         self.assertFalse(Taxonomy.objects.filter(canonical_name='Thaumatophora').exists())
 
     @mock.patch(_PATCH_PREFS)
-    @mock.patch(_PATCH_ALL)
-    @mock.patch(_PATCH_ROOT)
+    @mock.patch(_PATCH_SLEEP, return_value=None)
+    @mock.patch(_PATCH_HTTP_GET)
     @mock.patch(_PATCH_CONNECT)
     @mock.patch(_PATCH_DISCONNECT)
     def test_invalid_taxon_links_to_valid_taxonomy(
-        self, mock_dis, mock_con, mock_root, mock_all, mock_prefs
+        self, mock_dis, mock_con, mock_http_get, mock_sleep, mock_prefs
     ):
         mock_prefs.SiteSetting.auto_validate_taxa_on_upload = True
         root = _record(100, 'Plecoptera', 'order', parent_id=10)
@@ -134,8 +262,8 @@ class TestHarvestTaxonWorksSpeciesTask(FastTenantTestCase):
             valid_id=111,
         )
         synonym['type'] = 'Combination'
-        mock_root.return_value = root
-        mock_all.return_value = [root, genus, species_parent, accepted, synonym]
+        sample_page = [root, genus, species_parent, accepted, synonym]
+        mock_http_get.side_effect = self._mock_http_get(sample_page, root_payload=root)
 
         session = self._make_session()
         harvest_taxonworks_species(session.id, schema_name=self.schema_name)
@@ -184,7 +312,7 @@ class TestTaxonWorksGbifLineage(FastTenantTestCase):
 
     def _make_processor(self):
         return TaxonWorksTaxaProcessor(
-            base_url='https://sfg.taxonworks.org',
+            base_url='https://test.taxonworks.org',
             project_token='tok',
         )
 
@@ -377,7 +505,7 @@ class TestSpeciesHierarchyValidation(FastTenantTestCase):
 
     def _proc(self):
         return TaxonWorksTaxaProcessor(
-            base_url='https://sfg.taxonworks.org',
+            base_url='https://test.taxonworks.org',
             project_token='tok',
         )
 
