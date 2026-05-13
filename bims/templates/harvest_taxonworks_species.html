@@ -1,0 +1,369 @@
+{% extends 'main_base.html' %}
+{% load static %}
+
+{% block subtitle %}Harvest TaxonWorks Taxa{% endblock %}
+
+{% block head %}
+    <link href="{% static "css/csv_uploader.css" %}" rel="stylesheet">
+    <style>
+        #log-container {
+            background-color: black !important;
+            color: white !important;
+            font-size: 10pt;
+        }
+        body {
+            background-image: none;
+        }
+        .source-help {
+            font-size: 10pt;
+            color: #6c757d;
+        }
+    </style>
+{% endblock %}
+
+{% block body_content %}
+    <div class="loading">Loading&#8230;</div>
+    <div class="container">
+        <div class="jumbotron csv-uploader-wrapper">
+            <div class="help-block-space"></div>
+            <h3>Harvest TaxonWorks Taxa</h3>
+            <p class="text-muted">
+                Fetches taxonomy from a TaxonWorks instance API
+            </p>
+
+            {% if messages %}
+                <div class="alert alert-warning" role="alert">
+                    {% for message in messages %}
+                        <div>{{ message }}</div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+
+            <div class="modal-body">
+                <form action="{{ request.path }}" method="post" id="taxonworks-harvest-form" novalidate>
+                    {% csrf_token %}
+
+                    {% if not upload_session %}
+                    <div class="help-block">
+                        <div class="help-block-space"></div>
+
+                        {% if previous_configs %}
+                        <div class="form-group row" style="margin-bottom: 20px;">
+                            <label for="previous-config" class="col-sm-2 col-form-label"><b>Previous config</b></label>
+                            <div class="col-sm-10">
+                                <select class="form-control" id="previous-config">
+                                    <option value="">— select to pre-fill —</option>
+                                    {% for cfg in previous_configs %}
+                                        <option
+                                            value="{{ cfg.id }}"
+                                            data-taxon-group="{{ cfg.taxon_group_id }}"
+                                            data-base-url="{{ cfg.base_url }}"
+                                            data-project-token="{{ cfg.project_token }}"
+                                            data-taxon-name-id="{{ cfg.taxon_name_id }}"
+                                            data-exclude-extinct="{{ cfg.exclude_extinct|yesno:'1,0' }}"
+                                        >{{ cfg.label }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                        </div>
+                        <hr>
+                        {% endif %}
+
+                        <div class="form-group row">
+                            <label for="taxon-group" class="col-sm-2 col-form-label"><b>Taxon Group</b></label>
+                            <div class="col-sm-10">
+                                <select class="form-control" name="taxon_group" id="taxon-group">
+                                    <option value="" disabled selected>Choose a taxon group</option>
+                                    {% for taxon_group in taxa_groups %}
+                                        <option value="{{ taxon_group.id }}">{{ taxon_group.name }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="form-group row" style="margin-top: 10px;">
+                            <label for="base-url" class="col-sm-2 col-form-label"><b>Base URL</b></label>
+                            <div class="col-sm-10">
+                                <input type="url" class="form-control" id="base-url" name="base_url"
+                                       placeholder="e.g. https://sfg.taxonworks.org"
+                                       value="{{ request.POST.base_url }}">
+                            </div>
+                        </div>
+
+                        <div class="form-group row" style="margin-top: 10px;">
+                            <label for="project-token" class="col-sm-2 col-form-label"><b>Project Token</b></label>
+                            <div class="col-sm-10">
+                                <input type="text" class="form-control" id="project-token" name="project_token"
+                                       placeholder="Public project token"
+                                       value="{{ request.POST.project_token }}">
+                            </div>
+                        </div>
+
+                        <div class="form-group row" style="margin-top: 10px;">
+                            <label for="taxon-name-id" class="col-sm-2 col-form-label"><b>Taxon Name ID</b></label>
+                            <div class="col-sm-10">
+                                <input type="number" class="form-control" id="taxon-name-id" name="taxon_name_id"
+                                       placeholder="e.g. 998323 for Plecoptera" min="1"
+                                       value="{{ request.POST.taxon_name_id }}">
+                                <small class="source-help">
+                                    Enter the TaxonWorks root taxon name ID, or search by name below.
+                                </small>
+                            </div>
+                        </div>
+
+                        <div class="form-group row" style="margin-top: 6px;">
+                            <label class="col-sm-2 col-form-label text-muted" style="font-size:10pt;">Search name</label>
+                            <div class="col-sm-10">
+                                <div class="input-group">
+                                    <input type="text" class="form-control" id="taxon-name-search"
+                                           placeholder="e.g. Plecoptera">
+                                    <div class="input-group-append">
+                                        <button class="btn btn-outline-secondary" type="button" id="taxon-name-search-btn">
+                                            Search
+                                        </button>
+                                    </div>
+                                </div>
+                                <div id="taxon-name-search-results" style="display:none; margin-top:6px;">
+                                    <ul class="list-group" id="taxon-name-result-list"></ul>
+                                </div>
+                                <small id="taxon-name-search-status" class="source-help"></small>
+                            </div>
+                        </div>
+
+                        <div class="form-group row" style="margin-top: 20px;">
+                            <label class="col-sm-2 col-form-label"></label>
+                            <div class="col-sm-10">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="exclude-extinct"
+                                           name="exclude_extinct" value="1"
+                                           {% if request.POST.exclude_extinct != '0' %}checked{% endif %}>
+                                    <label class="form-check-label" for="exclude-extinct">
+                                        Exclude extinct taxa
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+
+                        <button class="btn btn-primary" type="submit" disabled id="harvesting-btn">
+                            Start harvesting
+                        </button>
+                    </div>
+                    {% endif %}
+                </form>
+
+                {% if upload_session %}
+                    <div class="upload-progress-container">
+                        <h5>Current process:</h5>
+                        <div class="card">
+                            <div class="card-body">
+                                <h5 class="card-title">
+                                    Module group: {{ upload_session.module_group.name }}
+                                    {% if upload_session.taxon_name_id %} - TaxonWorks ID {{ upload_session.taxon_name_id }}
+                                    {% endif %}
+                                </h5>
+                                <p>Start time: {{ upload_session.start_time }}</p>
+                                <p>Base URL: {{ upload_session.base_url }}</p>
+                                <p class="card-text">
+                                    Status: <span class="progress-text">
+                                        {% if upload_session.status %}{{ upload_session.status }}{% else %}Processing{% endif %}
+                                    </span>
+                                </p>
+                                <div class="log">
+                                    <textarea id="log-container" rows="10" style="width: 100%">{{ upload_session.log | safe }}</textarea>
+                                </div>
+                                <button class="btn btn-danger" data-toggle="modal" data-target="#cancelModal" data-id="{{ upload_session.id }}">
+                                    Cancel
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                {% endif %}
+
+                {% if finished_sessions %}
+                    <div class="upload-progress-container">
+                        <h5>Finished harvest sessions:</h5>
+                        {% for session in finished_sessions %}
+                            <div class="card" style="margin-bottom: 10px;">
+                                <div class="card-body">
+                                    <h5 class="card-title">
+                                        <a href="{{ session.log_file.url }}" class="btn btn-warning btn-sm">Download log</a>
+                                    </h5>
+                                    <p>
+                                        {{ session.module_group.name }}
+                                        {% with data=session.additional_data %}
+                                            {% if data.taxon_name_id %} - TaxonWorks ID {{ data.taxon_name_id }}{% endif %}
+                                        {% endwith %}
+                                    </p>
+                                    <p>Started at {{ session.start_time }}</p>
+                                    {% if session.duration_display %}
+                                        <p>Duration: {{ session.duration_display }}</p>
+                                    {% endif %}
+                                    {% if session.canceled %}
+                                        <p style="color: red;">Canceled</p>
+                                    {% else %}
+                                        <p class="card-text">
+                                            Result: {% if session.status %}{{ session.status }}{% else %}Finished{% endif %}
+                                        </p>
+                                    {% endif %}
+                                </div>
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade" id="cancelModal" tabindex="-1" role="dialog"
+         aria-labelledby="cancelModalTitle" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="cancelModalTitle">Cancel session</h5>
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                        <span aria-hidden="true">&times;</span>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    Are you sure you want to cancel this harvest session?
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
+                    <button type="button" class="btn btn-danger" id="cancel-session">Cancel session</button>
+                </div>
+            </div>
+        </div>
+    </div>
+{% endblock %}
+
+{% block foot %}
+    <script src="{% static "js/libs/jquery/jquery-3.3.1.min.js" %}"></script>
+    <script src="{% static "js/libs/bootstrap-4.0.0/js/bootstrap.min.js" %}"></script>
+    <script type="text/javascript">
+        const updateUrl = '/api/harvest-status/';
+        const harvestSessionInProgress = {% if upload_session %}true{% else %}false{% endif %};
+        const harvestSessionId = {% if upload_session %}{{ upload_session.id }}{% else %}0{% endif %};
+        let currentSessionId = 0;
+
+        const updateProgress = (id, $elm) => {
+            setTimeout(function () {
+                $.get(updateUrl + id).then(function (response) {
+                    if (!response['finished']) {
+                        $elm.find('.progress-text').html(response['status'] || 'Processing');
+                        let $log = $('#log-container');
+                        $log.html(response['log']);
+                        if ($log.length) {
+                            $log.scrollTop($log[0].scrollHeight - $log.height());
+                        }
+                        updateProgress(id, $elm);
+                    } else {
+                        location.reload();
+                    }
+                });
+            }, 1000);
+        };
+
+        $(function () {
+            function checkEnableHarvesting() {
+                let taxonGroupId = $('#taxon-group').val();
+                let baseUrl = $('#base-url').val();
+                let projectToken = $('#project-token').val();
+                let taxonNameId = $('#taxon-name-id').val();
+                if (taxonGroupId && baseUrl && projectToken && taxonNameId && parseInt(taxonNameId) > 0) {
+                    $('#harvesting-btn').prop('disabled', false);
+                } else {
+                    $('#harvesting-btn').prop('disabled', true);
+                }
+            }
+
+            $('#taxon-group').change(checkEnableHarvesting);
+            $('#base-url, #project-token, #taxon-name-id').on('input', checkEnableHarvesting);
+            checkEnableHarvesting();
+
+            // Taxon name search
+            function doTaxonNameSearch() {
+                const baseUrl = $('#base-url').val().trim();
+                const projectToken = $('#project-token').val().trim();
+                const name = $('#taxon-name-search').val().trim();
+                if (!baseUrl || !projectToken || !name) {
+                    $('#taxon-name-search-status').text('Please fill in Base URL, Project Token and a search name first.');
+                    return;
+                }
+                $('#taxon-name-search-status').text('Searching…');
+                $('#taxon-name-search-results').hide();
+                $('#taxon-name-result-list').empty();
+                $.get('/api/taxonworks-name-search/', {
+                    base_url: baseUrl,
+                    project_token: projectToken,
+                    name: name
+                }).done(function (data) {
+                    const results = data.results || [];
+                    if (!results.length) {
+                        $('#taxon-name-search-status').text('No results found.');
+                        return;
+                    }
+                    $('#taxon-name-search-status').text('');
+                    results.forEach(function (r) {
+                        const label = r.name + (r.rank ? ' (' + r.rank + ')' : '') + ' — ID ' + r.id;
+                        const badge = r.valid
+                            ? '<span class="badge badge-success" style="margin-left:6px;">accepted</span>'
+                            : '<span class="badge badge-secondary" style="margin-left:6px;">synonym</span>';
+                        const $li = $('<li class="list-group-item list-group-item-action" style="cursor:pointer;padding:6px 10px;font-size:10pt;"></li>')
+                            .html(label + badge)
+                            .on('click', function () {
+                                $('#taxon-name-id').val(r.id);
+                                $('#taxon-name-result-list li').removeClass('active');
+                                $(this).addClass('active');
+                                checkEnableHarvesting();
+                            });
+                        $('#taxon-name-result-list').append($li);
+                    });
+                    $('#taxon-name-search-results').show();
+                }).fail(function () {
+                    $('#taxon-name-search-status').text('Search failed. Check Base URL and Project Token.');
+                });
+            }
+
+            $('#taxon-name-search-btn').on('click', doTaxonNameSearch);
+            $('#taxon-name-search').on('keydown', function (e) {
+                if (e.key === 'Enter') { e.preventDefault(); doTaxonNameSearch(); }
+            });
+
+            $('#previous-config').change(function () {
+                const $opt = $(this).find('option:selected');
+                if (!$opt.val()) return;
+                const taxonGroupId = $opt.data('taxon-group');
+                const baseUrl = $opt.data('base-url');
+                const projectToken = $opt.data('project-token');
+                const taxonNameId = $opt.data('taxon-name-id');
+                const excludeExtinct = $opt.data('exclude-extinct');
+                if (taxonGroupId) $('#taxon-group').val(taxonGroupId);
+                if (baseUrl) $('#base-url').val(baseUrl);
+                if (projectToken) $('#project-token').val(projectToken);
+                if (taxonNameId) $('#taxon-name-id').val(taxonNameId);
+                $('#exclude-extinct').prop('checked', excludeExtinct === '1' || excludeExtinct === 1);
+                checkEnableHarvesting();
+            });
+
+            let textarea = document.getElementById('log-container');
+            if (textarea) {
+                textarea.scrollTop = textarea.scrollHeight;
+            }
+
+            if (harvestSessionInProgress) {
+                updateProgress(harvestSessionId, $('.upload-progress-container'));
+            }
+
+            $('#cancel-session').click(function () {
+                let $form = $('#taxonworks-harvest-form');
+                $form.append('<input type="hidden" name="cancel" value="True"/>');
+                $form.append('<input type="hidden" name="canceled_session_id" value="' + currentSessionId + '"/>');
+                $form.submit();
+            });
+
+            $('#cancelModal').on('shown.bs.modal', function (event) {
+                currentSessionId = $(event.relatedTarget).data('id');
+            });
+        });
+    </script>
+{% endblock %}

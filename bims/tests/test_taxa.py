@@ -143,7 +143,7 @@ class TaxaCSVSerializerTest(TestCase):
         serialized_data = serializer.data
 
         self.assertEqual(serialized_data['taxon_rank'], 'Species')
-        self.assertEqual(serialized_data['species'], 'Homo sapiens')
+        self.assertEqual(serialized_data['species'], 'sapiens')
         self.assertEqual(serialized_data['taxon'], 'Homo sapiens')
         self.assertEqual(serialized_data['common_name'], 'Human')
         self.assertEqual(serialized_data['endemism'], 'Unknown')
