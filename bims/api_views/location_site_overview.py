@@ -122,8 +122,10 @@ class LocationSiteOverviewData(object):
             )
 
         iucn_category_choices = dict(IUCNStatus.CATEGORY_CHOICES)
+        SPECIES_RANKS = ['SPECIES', 'SUBSPECIES', 'VARIETY']
         cons_rows = annotated.filter(
-            taxonomy__iucn_status__national=False
+            taxonomy__taxonomic_status='ACCEPTED',
+            taxonomy__rank__in=SPECIES_RANKS,
         ).values('module_group_id', 'iucn_category').annotate(
             colour=F('taxonomy__iucn_status__colour'),
             count=Count('id'),

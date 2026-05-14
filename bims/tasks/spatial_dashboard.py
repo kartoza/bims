@@ -77,13 +77,18 @@ def spatial_dashboard_cons_status(search_parameters=None, search_process_id=None
     )
 
 
-def _compute_rli(taxa_to_modules, year_taxa_statuses, dd_categories):
+def _compute_rli(taxa_to_modules, year_taxa_statuses, dd_categories,
+                 use_fixed_pool=False):
     """Compute RLI values from per-year per-taxon statuses.
 
     Args:
         taxa_to_modules: dict mapping taxonomy_id -> set of module names
         year_taxa_statuses: dict mapping year -> list of (taxonomy_id, category)
         dd_categories: set of DD category codes
+        use_fixed_pool: if True, fix the denominator species count (N) from the
+            first assessment year so it remains constant across all years.
+            This implements the IUCN RLI rule that the species pool is anchored
+            to the first year of assessment.
 
     Returns:
         (per_module_year, aggregate_year) dicts with RLI results.
@@ -109,6 +114,24 @@ def _compute_rli(taxa_to_modules, year_taxa_statuses, dd_categories):
 
     per_module_year = {}
     aggregate_year = {}
+
+    module_n_fixed = {}
+    agg_n_fixed = None
+    if use_fixed_pool and year_taxa_statuses:
+        first_year = min(year_taxa_statuses.keys())
+        _mod_counts = defaultdict(int)
+        _agg_count = 0
+        for tid, category in year_taxa_statuses[first_year]:
+            if category in EXCLUDED_CATEGORIES:
+                continue
+            if RLI_WEIGHTS.get(category) is None:
+                continue
+            modules_for_tid = taxa_to_modules.get(tid, {'Unknown'})
+            for mod in modules_for_tid:
+                _mod_counts[mod] += 1
+            _agg_count += 1
+        module_n_fixed = dict(_mod_counts)
+        agg_n_fixed = _agg_count
 
     for year, taxa_statuses in year_taxa_statuses.items():
         module_data = defaultdict(lambda: {
@@ -144,8 +167,10 @@ def _compute_rli(taxa_to_modules, year_taxa_statuses, dd_categories):
             agg['categories'][category] += 1
 
         for mod, data in module_data.items():
-            if data['assessed'] > 0:
-                rli = 1 - (data['weighted'] / (W_MAX * data['assessed']))
+            n = module_n_fixed.get(
+                mod, data['assessed']) if use_fixed_pool else data['assessed']
+            if n > 0:
+                rli = 1 - (data['weighted'] / (W_MAX * n))
                 per_module_year[(mod, year)] = {
                     'rli': round(rli, 4),
                     'assessed': data['assessed'],
@@ -153,8 +178,9 @@ def _compute_rli(taxa_to_modules, year_taxa_statuses, dd_categories):
                     'categories': dict(data['categories']),
                 }
 
-        if agg['assessed'] > 0:
-            rli = 1 - (agg['weighted'] / (W_MAX * agg['assessed']))
+        n_agg = agg_n_fixed if (use_fixed_pool and agg_n_fixed is not None) else agg['assessed']
+        if n_agg > 0:
+            rli = 1 - (agg['weighted'] / (W_MAX * n_agg))
             aggregate_year[year] = {
                 'rli': round(rli, 4),
                 'assessed': agg['assessed'],
@@ -255,8 +281,12 @@ def spatial_dashboard_rli(search_parameters=None, search_process_id=None):
             search = CollectionSearch(search_parameters)
             collection_results = search.process_search()
 
-            # Get distinct taxa with their module groups
-            taxa_modules_qs = collection_results.values(
+            SPECIES_RANKS = ['SPECIES', 'SUBSPECIES', 'VARIETY']
+            taxa_modules_qs = collection_results.filter(
+                taxonomy__taxonomic_status='ACCEPTED',
+                taxonomy__rank__in=SPECIES_RANKS,
+                taxonomy__origin__origin_key='indigenous',
+            ).values(
                 'taxonomy_id', 'module_group__name'
             ).distinct()
 
@@ -283,7 +313,6 @@ def spatial_dashboard_rli(search_parameters=None, search_process_id=None):
                 search_process.save_to_file(results)
                 return
 
-            # Try IUCNAssessment history for proper temporal RLI
             assessments = list(
                 IUCNAssessment.objects.filter(
                     taxonomy_id__in=taxonomy_ids,
@@ -295,7 +324,6 @@ def spatial_dashboard_rli(search_parameters=None, search_process_id=None):
                 ).order_by('taxonomy_id', 'year_published')
             )
 
-            # Build per-taxon timelines
             taxon_timelines = defaultdict(list)
             all_years = set()
             for a in assessments:
@@ -306,28 +334,19 @@ def spatial_dashboard_rli(search_parameters=None, search_process_id=None):
                     all_years.add(year)
 
             if all_years:
-                # Primary path: compute RLI from assessment history
-                # For each assessment year, determine each taxon's status
-                # using its most recent assessment at or before that year
-                # (retrospective adjustment per IUCN RLI methodology).
-                sorted_years = sorted(all_years)
-                year_taxa_statuses = {}
-
-                for year in sorted_years:
-                    statuses = []
-                    for tid, timeline in taxon_timelines.items():
-                        status = None
-                        for assess_year, cat in timeline:
-                            if assess_year <= year:
-                                status = cat
-                            else:
-                                break
-                        if status is not None:
-                            statuses.append((tid, status))
-                    year_taxa_statuses[year] = statuses
+                # Primary path: compute RLI from assessment history.
+                # No back-casting: only species actually assessed in a given
+                # year contribute to that year's calculation. The species pool
+                # (denominator N) is fixed to the count from the first year of
+                # assessment and does not change in subsequent years.
+                year_taxa_statuses = defaultdict(list)
+                for tid, timeline in taxon_timelines.items():
+                    for assess_year, cat in timeline:
+                        year_taxa_statuses[assess_year].append((tid, cat))
 
                 per_module_year, aggregate_year = _compute_rli(
-                    taxa_to_modules, year_taxa_statuses, DD_CATEGORIES
+                    taxa_to_modules, dict(year_taxa_statuses), DD_CATEGORIES,
+                    use_fixed_pool=True,
                 )
             else:
                 # Fallback: compute a current snapshot RLI from
