@@ -6,7 +6,9 @@ from celery import shared_task
     queue='search'
 )
 def climate_multi_site_summary(parameters, search_process_id):
-    from django.db.models import Avg, Min, Max, Sum, Count
+    from django.db.models import Avg, Min, Max, Sum, Count, Value
+    from django.db.models.functions import NullIf
+    from climate.views import MISSING
 
     from bims.api_views.search_module import ClimateModule
     from bims.models import BaseMapLayer, LocationContext
@@ -66,14 +68,17 @@ def climate_multi_site_summary(parameters, search_process_id):
                 qs = climate_qs.filter(location_site=site)
                 if not qs.exists():
                     continue
+                def _ni(field):
+                    return NullIf(field, Value(MISSING))
+
                 stats = qs.aggregate(
-                    avg_temp=Avg('avg_temperature'),
-                    min_temp=Min('min_temperature'),
-                    max_temp=Max('max_temperature'),
-                    avg_humidity=Avg('avg_humidity'),
-                    avg_windspeed=Avg('avg_windspeed'),
-                    total_rainfall=Sum('daily_rainfall'),
-                    max_rainfall=Max('daily_rainfall'),
+                    avg_temp=Avg(_ni('avg_temperature')),
+                    min_temp=Min(_ni('min_temperature')),
+                    max_temp=Max(_ni('max_temperature')),
+                    avg_humidity=Avg(_ni('avg_humidity')),
+                    avg_windspeed=Avg(_ni('avg_windspeed')),
+                    total_rainfall=Sum(_ni('daily_rainfall')),
+                    max_rainfall=Max(_ni('daily_rainfall')),
                     record_count=Count('id'),
                 )
                 summary['site_id'].append(site.id)

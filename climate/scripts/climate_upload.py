@@ -137,10 +137,17 @@ class ClimateCSVUpload(DataCSVUpload):
             self.error_file(row, f"Error saving climate data: {e}")
 
     def get_float_value(self, row, key):
-        """Get float value from row, return None if empty or invalid."""
+        """Get float value from row.
+
+        Returns -999.0 when the source value is '-999' (the conventional
+        sentinel for true missing data), so the distinction between "not
+        measured" and "measured but data unavailable" is preserved in the
+        database and survives round-trips through the daily CSV download.
+        Returns None for empty / unparseable values.
+        """
         value = self.row_value(row, key)
         if value == '-999':
-            return None
+            return -999.0
         if not value:
             return None
         try:
