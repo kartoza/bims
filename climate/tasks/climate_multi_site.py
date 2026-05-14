@@ -51,6 +51,7 @@ def climate_multi_site_summary(parameters, search_process_id):
             summary = {
                 'site_id': [],
                 'site_code': [],
+                'station_name': [],
                 'park_name': [] if is_sanparks else None,
                 'avg_temp': [],
                 'min_temp': [],
@@ -85,6 +86,7 @@ def climate_multi_site_summary(parameters, search_process_id):
                 summary['site_code'].append(
                     site.site_code if site.site_code else site.name
                 )
+                summary['station_name'].append(site.name or '')
                 if is_sanparks:
                     park_context = LocationContext.objects.filter(
                         site=site,

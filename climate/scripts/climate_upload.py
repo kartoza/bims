@@ -161,8 +161,6 @@ class ClimateCSVUpload(DataCSVUpload):
             # Try to find existing site by name and coordinates
             location_site = LocationSite.objects.filter(
                 name__iexact=station_name,
-                latitude=latitude,
-                longitude=longitude
             ).first()
 
             if location_site:

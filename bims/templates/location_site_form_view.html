@@ -201,11 +201,13 @@
                 </div>
             </div>
             {% endif %}
-            {% if project_name == 'bims' or project_name == 'sanparks' %}
+            {% if project_name == 'bims' or project_name == 'sanparks' or is_station %}
                 <div class="form-group row">
                     <label for="site_name"
                            class="col-sm-2 col-form-label col-form-label">
-                        {% if project_name == 'sanparks' %}
+                        {% if is_station %}
+                            Station Name
+                        {% elif project_name == 'sanparks' %}
                             Park Name
                         {% else %}
                             Site Name

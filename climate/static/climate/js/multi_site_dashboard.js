@@ -90,9 +90,10 @@ function renderClimateSummaryTable(data) {
         let singleSiteUrl = '/climate/' + siteId + '/?siteId=' + siteId + baseQuery;
 
         let $tr = $('<tr>');
-        if (summaryData.hasOwnProperty('park_name')) {
+        if (summaryData['park_name']) {
             $tr.append('<td>' + (summaryData['park_name'][index] || '-') + '</td>');
         }
+        $tr.append('<td>' + (summaryData['station_name'][index] || '-') + '</td>');
         $tr.append(
             '<td><a href="' + singleSiteUrl + '">' + siteCode + '</a></td>'
         );
