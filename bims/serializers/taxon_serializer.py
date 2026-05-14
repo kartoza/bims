@@ -221,6 +221,21 @@ class TaxonSerializer(serializers.ModelSerializer):
 
         return species_name
 
+    PUBLIC_EXCLUDED_FIELDS = {
+        'can_be_validated',
+        'taxon_group',
+        'DT_RowId',
+        'proposal_id',
+        'can_edit',
+        'children_count',
+        'other_group_count',
+        'rejected',
+        'ready_for_validation',
+        'validation_message',
+        'end_embargo_date',
+        'verified',
+    }
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.taxonomy_proposals = {}
@@ -231,6 +246,13 @@ class TaxonSerializer(serializers.ModelSerializer):
                 obj.original_taxonomy_id: obj for obj in TaxonomyUpdateProposal.objects.filter(
                     original_taxonomy__in=[obj.id for obj in self.instance], status='pending'
                 )}
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        if self.context.get('is_public'):
+            for field in self.PUBLIC_EXCLUDED_FIELDS:
+                data.pop(field, None)
+        return data
 
     def get_pending_proposal(self, obj):
         return self.taxonomy_proposals.get(obj.id)

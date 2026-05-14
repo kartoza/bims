@@ -147,7 +147,7 @@ class HarvestSessionStatusView(APIView):
         except HarvestSession.DoesNotExist:
             raise Http404('No session found')
         session_data = {
-            'module_group': session.module_group.name,
+            'module_group': session.module_group.name if session.module_group else '',
             'finished': session.finished,
             'start_time': str(session.start_time),
             'status': session.status

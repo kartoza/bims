@@ -118,6 +118,7 @@ from bims.download.csv_download import CsvDownload
 from bims.views.data_upload import DataUploadStatusView, ResumeUploadView
 from bims.views.harvest_collection_data import HarvestSessionStatusView
 from bims.api_views.taxonworks_search import TaxonWorksNameSearchView
+from bims.api_views.bims_fetch_taxon_groups import BimsFetchTaxonGroupsView
 from bims.api_views.taxon_group import (
     UpdateTaxonGroupOrder,
     RemoveTaxaFromTaxonGroup,
@@ -205,7 +206,8 @@ urlpatterns = [
         SpatialDashboardSpeciesDownloadApiView.as_view(),
         name='spatial-dashboard-species-download'),
     re_path(r'^taxon/(?P<pk>[0-9]+)/$',
-        TaxonDetail.as_view()),
+        TaxonDetail.as_view(),
+        name='taxon-detail'),
     re_path(r'^taxon-proposal/(?P<pk>[0-9]+)/$',
         TaxonProposalDetail.as_view()),
     re_path(r'^cluster/(?P<administrative_level>\w+)/$',
@@ -333,6 +335,9 @@ urlpatterns = [
     re_path(r'^taxonworks-name-search/$',
         TaxonWorksNameSearchView.as_view(),
         name='taxonworks-name-search'),
+    re_path(r'^bims-fetch-taxon-groups/$',
+        BimsFetchTaxonGroupsView.as_view(),
+        name='bims-fetch-taxon-groups'),
     re_path(r'^taxa-list/$',
         TaxaList.as_view(),
         name='taxa-list'),
