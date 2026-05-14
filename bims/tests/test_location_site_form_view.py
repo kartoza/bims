@@ -203,6 +203,31 @@ class TestLocationSiteFormView(FastTenantTestCase):
             )
         )
 
+    def test_LocationSiteFormUpdateView_station_name_label(self):
+        """
+        Test that the update form shows 'Station Name' label when the
+        location site's location type is 'Weather Station'.
+        """
+        user = UserF.create()
+        self.client.login(
+            username=user.username,
+            password='password',
+        )
+        weather_loc_type = LocationTypeF(
+            name='Weather Station',
+            allowed_geometry='POINT'
+        )
+        location_site = LocationSiteF.create(
+            location_type=weather_loc_type,
+            creator=user,
+        )
+        response = self.client.get(
+            '/location-site-form/update/?id={}'.format(location_site.id)
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context['is_station'])
+        self.assertContains(response, 'Station Name')
+
     def test_LocationSiteFormView_delete(self):
         loc_type = LocationTypeF(
             name='PointObservation',

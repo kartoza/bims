@@ -426,6 +426,10 @@ class LocationSiteFormUpdateView(LocationSiteFormView):
         context_data['update'] = True
         context_data['allow_to_edit'] = self.allow_to_edit()
         context_data['site_id'] = self.location_site.id
+        context_data['is_station'] = bool(
+            self.location_site.location_type and
+            self.location_site.location_type.name == 'Weather Station'
+        )
         context_data['legacy_site_code'] = self.location_site.legacy_site_code
         context_data['legacy_river_name'] = (
             self.location_site.legacy_river_name
