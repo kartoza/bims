@@ -80,16 +80,33 @@ class TaxonDetail(APIView):
             )
         return values
 
-    def get_serializer_data(self, pk):
+    def get_serializer_data(self, pk, is_public=False):
         taxon = self.get_object(pk)
-
-        serializer = TaxonDetailSerializer(taxon)
+        serializer = TaxonDetailSerializer(taxon, context={'is_public': is_public})
         return serializer.data
 
+    @swagger_auto_schema(
+        operation_summary='Retrieve taxon detail',
+        operation_description=(
+            'Returns detailed information for a single taxon by its ID, '
+            'including taxonomic hierarchy, occurrence counts, common names, '
+            'and conservation status.\n\n'
+            '**Authentication**\n'
+            'This endpoint is publicly accessible. Unauthenticated requests '
+            'receive a reduced response that omits internal validation and '
+            'administrative fields.'
+        ),
+        responses={
+            200: openapi.Response(description='Taxon detail object.'),
+            404: openapi.Response(description='Taxon not found.'),
+        },
+        security=[],
+        tags=['Taxa'],
+    )
     def get(self, request, pk, format=None):
-
+        is_public = not request.user.is_authenticated
         taxon = self.get_object(pk)
-        data = self.get_serializer_data(pk)
+        data = self.get_serializer_data(pk, is_public=is_public)
 
         records = BiologicalCollectionRecord.objects.filter(
             taxonomy=taxon
@@ -506,6 +523,7 @@ class AddNewTaxon(LoginRequiredMixin, APIView):
 
 class TaxaPagination(PageNumberPagination):
     page_size = 20
+    max_page_size = 100
     page_size_query_param = 'page_size'
 
 
@@ -810,13 +828,14 @@ class TaxaList(APIView):
             'Returns a paginated list of taxa (Taxonomy records) with rich '
             'filtering support.\n\n'
             '**Authentication**\n'
-            'Public access is allowed when the site setting '
-            '`allow_public_taxa_view` is enabled. Public users always see '
-            'only validated taxa regardless of the `validated` parameter.\n\n'
+            'This endpoint is publicly accessible. Unauthenticated requests '
+            'are always restricted to validated taxa and receive a reduced '
+            'response that omits internal validation and administrative fields.\n\n'
             '**Pagination**\n'
             'Results are page-number paginated. Use `page` and `page_size` '
             'to navigate. The default page size is 20.'
         ),
+        security=[],
         manual_parameters=[
             openapi.Parameter(
                 'taxonGroup', openapi.IN_QUERY,
@@ -970,13 +989,8 @@ class TaxaList(APIView):
         tags=['Taxa'],
     )
     def get(self, request, *args):
-        from preferences import preferences
-        if not request.user.is_authenticated:
-            if not preferences.SiteSetting.allow_public_taxa_view:
-                return Response(
-                    {'detail': 'Authentication required.'},
-                    status=HTTP_403_FORBIDDEN
-                )
+        is_public = not request.user.is_authenticated
+        if is_public:
             # Public users may only see validated taxa — override any
             # 'validated' param they may have passed in the URL.
             mutable = request.GET.copy()
@@ -994,18 +1008,20 @@ class TaxaList(APIView):
                 TaxonSerializer(page, many=True, context={
                     'taxon_group_id': taxon_group_id,
                     'user': request.user.id,
-                    'validated': validated
+                    'validated': validated,
+                    'is_public': is_public,
                 }).data)
             serializer.data['is_expert'] = is_expert(
                 self.request.user,
                 TaxonGroup.objects.get(id=taxon_group_id)
-            ) if taxon_group_id else False
+            ) if taxon_group_id and not is_public else False
         else:
             serializer = TaxonSerializer(
                 taxon_list,
                 many=True,
                 context={
-                    'user': request.user.id
+                    'user': request.user.id,
+                    'is_public': is_public,
                 }
             )
         return Response(serializer.data)

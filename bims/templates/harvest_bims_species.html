@@ -1,0 +1,434 @@
+{% extends 'main_base.html' %}
+{% load static %}
+
+{% block subtitle %}Harvest BIMS Taxa{% endblock %}
+
+{% block head %}
+    <link href="{% static "css/csv_uploader.css" %}" rel="stylesheet">
+    <style>
+        #log-container {
+            background-color: black !important;
+            color: white !important;
+            font-size: 10pt;
+        }
+        body {
+            background-image: none;
+        }
+        .source-help {
+            font-size: 10pt;
+            color: #6c757d;
+        }
+        #remote-group-loading {
+            display: none;
+        }
+        #remote-group-error {
+            display: none;
+            color: #dc3545;
+            font-size: 10pt;
+            margin-top: 4px;
+        }
+        .import-mode-section {
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 14px 16px;
+            margin-top: 10px;
+        }
+    </style>
+{% endblock %}
+
+{% block body_content %}
+    <div class="loading">Loading&#8230;</div>
+    <div class="container">
+        <div class="jumbotron csv-uploader-wrapper">
+            <div class="help-block-space"></div>
+            <h3>Harvest BIMS Taxa</h3>
+            <p class="text-muted">
+                Fetches species from another BIMS instance and imports them into this instance.
+            </p>
+
+            {% if messages %}
+                <div class="alert alert-warning" role="alert">
+                    {% for message in messages %}
+                        <div>{{ message }}</div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+
+            <div class="modal-body">
+                <form action="{{ request.path }}" method="post" id="bims-harvest-form" novalidate>
+                    {% csrf_token %}
+
+                    {% if not upload_session %}
+                    <div class="help-block">
+                        <div class="help-block-space"></div>
+
+                        {% if previous_configs %}
+                        <div class="form-group row" style="margin-bottom: 20px;">
+                            <label for="previous-config" class="col-sm-3 col-form-label"><b>Previous config</b></label>
+                            <div class="col-sm-9">
+                                <select class="form-control" id="previous-config">
+                                    <option value="">— select to pre-fill —</option>
+                                    {% for cfg in previous_configs %}
+                                        <option
+                                            value="{{ cfg.id }}"
+                                            data-taxon-group="{{ cfg.taxon_group_id }}"
+                                            data-base-url="{{ cfg.base_url }}"
+                                            data-remote-group-id="{{ cfg.remote_group_id }}"
+                                            data-remote-group-name="{{ cfg.remote_group_name }}"
+                                            data-import-mode="{{ cfg.import_mode }}"
+                                        >{{ cfg.label }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                        </div>
+                        <hr>
+                        {% endif %}
+
+                        <!-- Step 1: BIMS instance URL -->
+                        <div class="form-group row">
+                            <label for="base-url" class="col-sm-3 col-form-label"><b>BIMS Instance URL</b></label>
+                            <div class="col-sm-9">
+                                <div class="input-group">
+                                    <input type="url" class="form-control" id="base-url" name="base_url"
+                                           placeholder="e.g. https://freshwaterbiodiversity.org"
+                                           value="{{ request.POST.base_url }}">
+                                    <div class="input-group-append">
+                                        <button class="btn btn-outline-secondary" type="button" id="fetch-groups-btn">
+                                            Fetch Taxon Groups
+                                        </button>
+                                    </div>
+                                </div>
+                                <small class="source-help">
+                                    Enter the base URL of the remote BIMS instance, then click
+                                    <em>Fetch Taxon Groups</em>.
+                                </small>
+                                <span id="remote-group-loading" class="source-help">
+                                    <span class="spinner-border spinner-border-sm" role="status"></span>
+                                    Fetching taxon groups&hellip;
+                                </span>
+                                <div id="remote-group-error"></div>
+                            </div>
+                        </div>
+
+                        <!-- Step 2: Remote taxon group selector (populated via AJAX) -->
+                        <div class="form-group row" style="margin-top: 10px;" id="remote-group-row">
+                            <label for="remote-group-select" class="col-sm-3 col-form-label"><b>Remote Taxon Group</b></label>
+                            <div class="col-sm-9">
+                                <select class="form-control" id="remote-group-select" disabled>
+                                    <option value="">— fetch groups first —</option>
+                                </select>
+                                <input type="hidden" name="remote_group_id" id="remote-group-id">
+                                <input type="hidden" name="remote_group_name" id="remote-group-name">
+                            </div>
+                        </div>
+
+                        <!-- Step 3: Import mode -->
+                        <div class="form-group row" style="margin-top: 16px;" id="import-mode-row">
+                            <label class="col-sm-3 col-form-label"><b>Import Mode</b></label>
+                            <div class="col-sm-9">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="radio" name="import_mode"
+                                           id="mode-existing" value="existing" checked>
+                                    <label class="form-check-label" for="mode-existing">
+                                        <b>Use existing taxon group</b> &mdash;
+                                        import species into a local taxon group
+                                    </label>
+                                </div>
+                                <div class="form-check" style="margin-top: 6px;">
+                                    <input class="form-check-input" type="radio" name="import_mode"
+                                           id="mode-new" value="new">
+                                    <label class="form-check-label" for="mode-new">
+                                        <b>Import as new taxon group</b> &mdash;
+                                        create a new local taxon group with the same name
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Local taxon group (only visible for "existing" mode) -->
+                        <div class="import-mode-section" id="existing-group-section">
+                            <div class="form-group row" style="margin-bottom: 0;">
+                                <label for="taxon-group" class="col-sm-3 col-form-label"><b>Local Taxon Group</b></label>
+                                <div class="col-sm-9">
+                                    <select class="form-control" name="taxon_group" id="taxon-group">
+                                        <option value="" disabled selected>Choose a local taxon group</option>
+                                        {% for taxon_group in taxa_groups %}
+                                            <option value="{{ taxon_group.id }}">{{ taxon_group.name }}</option>
+                                        {% endfor %}
+                                    </select>
+                                    <small class="source-help">
+                                        Species from the remote taxon group will be added to this group.
+                                    </small>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="import-mode-section" id="new-group-section" style="display:none;">
+                            <p class="text-muted" style="margin-bottom: 0; font-size: 10pt;">
+                                A new taxon group will be created using the remote group's name.
+                                All its species will be imported into that new group.
+                            </p>
+                        </div>
+
+                        <div style="margin-top: 16px;">
+                            <button class="btn btn-primary" type="submit" disabled id="harvesting-btn">
+                                Start harvesting
+                            </button>
+                        </div>
+                    </div>
+                    {% endif %}
+                </form>
+
+                {% if upload_session %}
+                    <div class="upload-progress-container">
+                        <h5>Current process:</h5>
+                        <div class="card">
+                            <div class="card-body">
+                                <h5 class="card-title">
+                                    {% if upload_session.remote_group_name %}
+                                        {{ upload_session.remote_group_name }}
+                                    {% else %}
+                                        Remote group #{{ upload_session.remote_group_id }}
+                                    {% endif %}
+                                    @ {{ upload_session.base_url }}
+                                    {% if upload_session.module_group %}
+                                        &rarr; {{ upload_session.module_group.name }}
+                                    {% endif %}
+                                </h5>
+                                <p>Start time: {{ upload_session.start_time }}</p>
+                                <p class="card-text">
+                                    Status: <span class="progress-text">
+                                        {% if upload_session.status %}{{ upload_session.status }}{% else %}Processing{% endif %}
+                                    </span>
+                                </p>
+                                <div class="log">
+                                    <textarea id="log-container" rows="10" style="width: 100%">{{ upload_session.log | safe }}</textarea>
+                                </div>
+                                <button class="btn btn-danger" data-toggle="modal" data-target="#cancelModal"
+                                        data-id="{{ upload_session.id }}" style="margin-top: 10px;">
+                                    Cancel
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                {% endif %}
+
+                {% if finished_sessions %}
+                    <div class="upload-progress-container" style="margin-top: 20px;">
+                        <h5>Finished harvest sessions:</h5>
+                        {% for session in finished_sessions %}
+                            <div class="card" style="margin-bottom: 10px;">
+                                <div class="card-body">
+                                    <h5 class="card-title">
+                                        <a href="{{ session.log_file.url }}" class="btn btn-warning btn-sm">Download log</a>
+                                    </h5>
+                                    <p>
+                                        {% with data=session.additional_data %}
+                                            {% if data.remote_group_name %}{{ data.remote_group_name }}{% else %}Group #{{ data.remote_group_id }}{% endif %}
+                                            @ {{ data.base_url }}
+                                            {% if session.module_group %} &rarr; {{ session.module_group.name }}{% endif %}
+                                            &mdash; mode:
+                                            {% if data.import_mode == 'new' %}new group{% else %}existing group{% endif %}
+                                        {% endwith %}
+                                    </p>
+                                    <p>Started at {{ session.start_time }}</p>
+                                    {% if session.duration_display %}
+                                        <p>Duration: {{ session.duration_display }}</p>
+                                    {% endif %}
+                                    {% if session.canceled %}
+                                        <p style="color: red;">Canceled</p>
+                                    {% else %}
+                                        <p class="card-text">
+                                            Result: {% if session.status %}{{ session.status }}{% else %}Finished{% endif %}
+                                        </p>
+                                    {% endif %}
+                                </div>
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Cancel modal -->
+    <div class="modal fade" id="cancelModal" tabindex="-1" role="dialog"
+         aria-labelledby="cancelModalTitle" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="cancelModalTitle">Cancel session</h5>
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                        <span aria-hidden="true">&times;</span>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    Are you sure you want to cancel this harvest session?
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
+                    <button type="button" class="btn btn-danger" id="cancel-session">Cancel session</button>
+                </div>
+            </div>
+        </div>
+    </div>
+{% endblock %}
+
+{% block foot %}
+    <script src="{% static "js/libs/jquery/jquery-3.3.1.min.js" %}"></script>
+    <script src="{% static "js/libs/bootstrap-4.0.0/js/bootstrap.min.js" %}"></script>
+    <script type="text/javascript">
+        const updateUrl = '/api/harvest-status/';
+        const harvestSessionInProgress = {% if upload_session %}true{% else %}false{% endif %};
+        const harvestSessionId = {% if upload_session %}{{ upload_session.id }}{% else %}0{% endif %};
+        let currentSessionId = 0;
+
+        const updateProgress = (id, $elm) => {
+            setTimeout(function () {
+                $.get(updateUrl + id).then(function (response) {
+                    if (!response['finished']) {
+                        $elm.find('.progress-text').html(response['status'] || 'Processing');
+                        let $log = $('#log-container');
+                        $log.html(response['log']);
+                        if ($log.length) {
+                            $log.scrollTop($log[0].scrollHeight - $log.height());
+                        }
+                        updateProgress(id, $elm);
+                    } else {
+                        location.reload();
+                    }
+                });
+            }, 1000);
+        };
+
+        $(function () {
+            function checkEnableHarvesting() {
+                const baseUrl = $('#base-url').val().trim();
+                const remoteGroupId = $('#remote-group-id').val().trim();
+                const importMode = $('input[name="import_mode"]:checked').val();
+                const localGroupId = $('#taxon-group').val();
+
+                let ready = baseUrl && remoteGroupId;
+                if (importMode === 'existing') {
+                    ready = ready && localGroupId;
+                }
+                $('#harvesting-btn').prop('disabled', !ready);
+            }
+
+            // Fetch remote taxon groups
+            $('#fetch-groups-btn').on('click', function () {
+                const baseUrl = $('#base-url').val().trim();
+                if (!baseUrl) {
+                    $('#remote-group-error').text('Please enter a BIMS instance URL first.').show();
+                    return;
+                }
+                $('#remote-group-error').hide();
+                $('#remote-group-loading').show();
+                $('#remote-group-select').prop('disabled', true).html('<option value="">Loading…</option>');
+                $('#remote-group-id').val('');
+                $('#remote-group-name').val('');
+                checkEnableHarvesting();
+
+                $.get('/api/bims-fetch-taxon-groups/', {base_url: baseUrl})
+                    .done(function (data) {
+                        $('#remote-group-loading').hide();
+                        const groups = data.results || [];
+                        if (!groups.length) {
+                            $('#remote-group-error').text('No taxon groups found on that instance.').show();
+                            $('#remote-group-select').html('<option value="">No groups found</option>');
+                            return;
+                        }
+                        let options = '<option value="" disabled selected>Choose a remote taxon group</option>';
+                        groups.forEach(function (g) {
+                            options += `<option value="${g.id}" data-name="${g.name}">${g.name}</option>`;
+                        });
+                        $('#remote-group-select').html(options).prop('disabled', false);
+                    })
+                    .fail(function (xhr) {
+                        $('#remote-group-loading').hide();
+                        const msg = (xhr.responseJSON && xhr.responseJSON.error)
+                            ? xhr.responseJSON.error
+                            : 'Failed to reach the remote BIMS instance. Check the URL.';
+                        $('#remote-group-error').text(msg).show();
+                        $('#remote-group-select').html('<option value="">Error fetching groups</option>');
+                    });
+            });
+
+            // When a remote group is selected, populate the hidden inputs
+            $('#remote-group-select').on('change', function () {
+                const $opt = $(this).find('option:selected');
+                $('#remote-group-id').val($opt.val());
+                $('#remote-group-name').val($opt.data('name') || $opt.text());
+                checkEnableHarvesting();
+            });
+
+            // Import mode toggle
+            $('input[name="import_mode"]').on('change', function () {
+                if ($(this).val() === 'existing') {
+                    $('#existing-group-section').show();
+                    $('#new-group-section').hide();
+                } else {
+                    $('#existing-group-section').hide();
+                    $('#new-group-section').show();
+                }
+                checkEnableHarvesting();
+            });
+
+            $('#taxon-group').on('change', checkEnableHarvesting);
+            $('#base-url').on('input', checkEnableHarvesting);
+
+            // Pre-fill from previous config
+            $('#previous-config').on('change', function () {
+                const $opt = $(this).find('option:selected');
+                if (!$opt.val()) return;
+                const baseUrl = $opt.data('base-url');
+                const remoteGroupId = $opt.data('remote-group-id');
+                const remoteGroupName = $opt.data('remote-group-name');
+                const importMode = $opt.data('import-mode');
+                const localGroupId = $opt.data('taxon-group');
+
+                if (baseUrl) $('#base-url').val(baseUrl);
+                if (remoteGroupId) {
+                    // Populate the remote group selector with the saved value
+                    const exists = $(`#remote-group-select option[value="${remoteGroupId}"]`).length;
+                    if (!exists) {
+                        const opt = `<option value="${remoteGroupId}" data-name="${remoteGroupName}" selected>${remoteGroupName || remoteGroupId}</option>`;
+                        $('#remote-group-select').append(opt).prop('disabled', false);
+                    }
+                    $('#remote-group-select').val(remoteGroupId);
+                    $('#remote-group-id').val(remoteGroupId);
+                    $('#remote-group-name').val(remoteGroupName || '');
+                }
+                if (importMode) {
+                    $(`input[name="import_mode"][value="${importMode}"]`).prop('checked', true).trigger('change');
+                }
+                if (localGroupId) $('#taxon-group').val(localGroupId);
+                checkEnableHarvesting();
+            });
+
+            // Scroll log to bottom on load
+            let textarea = document.getElementById('log-container');
+            if (textarea) {
+                textarea.scrollTop = textarea.scrollHeight;
+            }
+
+            if (harvestSessionInProgress) {
+                updateProgress(harvestSessionId, $('.upload-progress-container'));
+            }
+
+            // Cancel session
+            $('#cancel-session').click(function () {
+                let $form = $('#bims-harvest-form');
+                $form.append('<input type="hidden" name="cancel" value="True"/>');
+                $form.append('<input type="hidden" name="canceled_session_id" value="' + currentSessionId + '"/>');
+                $form.submit();
+            });
+
+            $('#cancelModal').on('shown.bs.modal', function (event) {
+                currentSessionId = $(event.relatedTarget).data('id');
+            });
+
+            checkEnableHarvesting();
+        });
+    </script>
+{% endblock %}

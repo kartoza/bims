@@ -22,6 +22,7 @@ class HarvestSession(models.Model):
         ('gbif', 'GBIF'),
         ('worms', 'WoRMS'),
         ('taxonworks', 'TaxonWorks'),
+        ('bims', 'BIMS'),
     )
 
     harvester = models.ForeignKey(
