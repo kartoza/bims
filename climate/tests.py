@@ -831,3 +831,211 @@ class ClimateUploadClearSearchProcessTests(FastTenantTestCase):
         uploader = self._make_uploader(canceled=False)
         uploader.process_ended()
         self.assertFalse(SearchProcess.objects.filter(pk=sp.pk).exists())
+
+
+class ClimateMissingValueTests(FastTenantTestCase):
+    """-999 sentinel preservation: upload, calculations, and daily CSV download."""
+
+    def setUp(self):
+        self.client = TenantClient(self.tenant)
+        self.location_site = LocationSiteF.create(site_code='MISS001')
+
+        # One normal record and one record whose measurements are all -999.
+        Climate.objects.create(
+            location_site=self.location_site,
+            station_name='Station',
+            date=date(2024, 3, 1),
+            year=2024, month=3,
+            avg_temperature=20.0,
+            min_temperature=10.0,
+            max_temperature=30.0,
+            avg_humidity=50.0,
+            min_humidity=45.0,
+            max_humidity=55.0,
+            avg_windspeed=5.0,
+            daily_rainfall=10.0,
+        )
+        Climate.objects.create(
+            location_site=self.location_site,
+            station_name='Station',
+            date=date(2024, 3, 2),
+            year=2024, month=3,
+            avg_temperature=-999.0,
+            min_temperature=-999.0,
+            max_temperature=-999.0,
+            avg_humidity=-999.0,
+            min_humidity=-999.0,
+            max_humidity=-999.0,
+            avg_windspeed=-999.0,
+            daily_rainfall=-999.0,
+        )
+
+    # ------------------------------------------------------------------
+    # Upload helper
+    # ------------------------------------------------------------------
+
+    def test_get_float_value_returns_sentinel(self):
+        """-999 in a CSV cell must be stored as -999.0, not as None."""
+        from climate.scripts.climate_upload import ClimateCSVUpload
+        uploader = ClimateCSVUpload.__new__(ClimateCSVUpload)
+        self.assertEqual(uploader.get_float_value({'x': '-999'}, 'x'), -999.0)
+
+    def test_get_float_value_returns_none_for_empty(self):
+        """Empty cell still produces None."""
+        from climate.scripts.climate_upload import ClimateCSVUpload
+        uploader = ClimateCSVUpload.__new__(ClimateCSVUpload)
+        self.assertIsNone(uploader.get_float_value({'x': ''}, 'x'))
+        self.assertIsNone(uploader.get_float_value({}, 'x'))
+
+    def test_get_float_value_preserves_zero(self):
+        """Zero is a real measurement and must not be confused with -999."""
+        from climate.scripts.climate_upload import ClimateCSVUpload
+        uploader = ClimateCSVUpload.__new__(ClimateCSVUpload)
+        self.assertEqual(uploader.get_float_value({'x': '0'}, 'x'), 0.0)
+        self.assertEqual(uploader.get_float_value({'x': '0.0'}, 'x'), 0.0)
+
+    # ------------------------------------------------------------------
+    # _round_value helper
+    # ------------------------------------------------------------------
+
+    def test_round_value_treats_sentinel_as_none(self):
+        from climate.views import _round_value, MISSING
+        self.assertIsNone(_round_value(MISSING))
+        self.assertIsNone(_round_value(-999.0))
+        self.assertIsNone(_round_value(None))
+        self.assertEqual(_round_value(0.0), 0.0)
+        self.assertEqual(_round_value(20.5), 20.5)
+
+    # ------------------------------------------------------------------
+    # _build_daily_records  (used for charts — -999 should become None)
+    # ------------------------------------------------------------------
+
+    def test_build_daily_records_converts_sentinel_to_none(self):
+        """-999 values must appear as None in chart data (not plotted)."""
+        qs = Climate.objects.filter(
+            location_site=self.location_site
+        ).order_by('date')
+        records = _build_daily_records(qs)
+
+        normal = records[0]
+        missing = records[1]
+
+        self.assertEqual(normal['temperature']['avg'], 20.0)
+        self.assertEqual(normal['rainfall']['total'], 10.0)
+
+        # All -999 fields should be None in chart data
+        self.assertIsNone(missing['temperature']['avg'])
+        self.assertIsNone(missing['temperature']['min'])
+        self.assertIsNone(missing['temperature']['max'])
+        self.assertIsNone(missing['rainfall']['total'])
+
+    # ------------------------------------------------------------------
+    # _build_monthly_records  (summary — -999 must not skew averages)
+    # ------------------------------------------------------------------
+
+    def test_build_monthly_records_excludes_sentinel(self):
+        """Monthly summary for March 2024 must only use the real record."""
+        qs = Climate.objects.filter(
+            location_site=self.location_site
+        ).order_by('date')
+        monthly = _build_monthly_records(qs)
+
+        # March 2024 — only 1 valid record (the -999 record contributes nothing)
+        self.assertEqual(len(monthly), 1)
+        march = monthly[0]
+        self.assertEqual(march['temperature']['avg'], 20.0)
+        self.assertEqual(march['temperature']['min'], 10.0)
+        self.assertEqual(march['temperature']['max'], 30.0)
+        self.assertEqual(march['rainfall']['total'], 10.0)
+
+    def test_build_monthly_records_sentinel_does_not_create_cold_day(self):
+        """-999 for min_temperature must not be counted as a cold day (<0°C)."""
+        qs = Climate.objects.filter(
+            location_site=self.location_site
+        ).order_by('date')
+        monthly = _build_monthly_records(qs)
+        march = monthly[0]
+        self.assertEqual(march['extremes']['cold_days'], 0)
+
+    # ------------------------------------------------------------------
+    # _build_historical_monthly_rainfall  (must skip -999)
+    # ------------------------------------------------------------------
+
+    def test_historical_rainfall_excludes_sentinel(self):
+        """Historical average must be based only on real measurements."""
+        qs = Climate.objects.filter(location_site=self.location_site)
+        historical = _build_historical_monthly_rainfall(qs)
+        # Only the real record (10 mm) counts — the -999 row is excluded.
+        self.assertEqual(historical.get(3), 10.0)
+
+    # ------------------------------------------------------------------
+    # Daily CSV download — -999 must be written verbatim
+    # ------------------------------------------------------------------
+
+    def test_daily_csv_preserves_sentinel(self):
+        """-999 in the database must appear as -999 in the daily CSV download,
+        not as a blank."""
+        from django.contrib.auth import get_user_model
+        from django.contrib.auth.models import Group
+
+        User = get_user_model()
+        private_group, _ = Group.objects.get_or_create(name='PrivateDataGroup')
+        user = User.objects.create_user(
+            username='private_miss', password='pass', email='pm@example.com'
+        )
+        user.groups.add(private_group)
+
+        self.client.login(username='private_miss', password='pass')
+        url = reverse('climate:climate-site', kwargs={'site_id': self.location_site.id})
+        response = self.client.get(url, {'siteId': self.location_site.id})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('daily_records_json', response.context)
+
+        records = json.loads(response.context['daily_records_json'])
+        self.assertEqual(len(records), 2)
+
+        # Sort by date so the -999 record is always second
+        records_by_date = {r['date']: r for r in records}
+        missing_record = records_by_date['2024-03-02']
+
+        self.assertEqual(missing_record['avg_temperature'], -999.0)
+        self.assertEqual(missing_record['min_temperature'], -999.0)
+        self.assertEqual(missing_record['max_temperature'], -999.0)
+        self.assertEqual(missing_record['daily_rainfall'], -999.0)
+
+    def test_daily_csv_preserves_zero(self):
+        """Zero measurements (real data) must not be confused with None/blank."""
+        Climate.objects.create(
+            location_site=self.location_site,
+            station_name='Station',
+            date=date(2024, 3, 3),
+            year=2024, month=3,
+            avg_temperature=0.0,
+            min_temperature=0.0,
+            max_temperature=0.0,
+            avg_humidity=0.0,
+            avg_windspeed=0.0,
+            daily_rainfall=0.0,
+        )
+
+        from django.contrib.auth import get_user_model
+        from django.contrib.auth.models import Group
+
+        User = get_user_model()
+        private_group, _ = Group.objects.get_or_create(name='PrivateDataGroup')
+        user = User.objects.create_user(
+            username='private_zero', password='pass', email='pz@example.com'
+        )
+        user.groups.add(private_group)
+
+        self.client.login(username='private_zero', password='pass')
+        url = reverse('climate:climate-site', kwargs={'site_id': self.location_site.id})
+        response = self.client.get(url, {'siteId': self.location_site.id})
+
+        records = json.loads(response.context['daily_records_json'])
+        records_by_date = {r['date']: r for r in records}
+        zero_record = records_by_date['2024-03-03']
+
+        self.assertEqual(zero_record['avg_temperature'], 0.0)
+        self.assertEqual(zero_record['daily_rainfall'], 0.0)

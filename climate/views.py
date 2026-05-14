@@ -9,7 +9,8 @@ from django.core.serializers.json import DjangoJSONEncoder
 from django.http import HttpResponse, Http404
 from django.shortcuts import render, get_object_or_404
 from django.views.generic import TemplateView
-from django.db.models import Avg, Min, Max, Sum, Count
+from django.db.models import Avg, Min, Max, Sum, Count, Value
+from django.db.models.functions import NullIf
 from rest_framework.views import APIView
 from rest_framework.response import Response
 
@@ -25,6 +26,15 @@ from bims.utils.search_process import get_or_create_search_process
 from bims.views.data_upload import DataUploadView
 from climate.tasks.climate_upload import climate_upload
 from climate.tasks.climate_multi_site import climate_multi_site_summary
+
+# Sentinel value used in uploaded CSVs to indicate truly missing data.
+MISSING = -999.0
+
+
+def _is_valid(value):
+    """Return True when *value* is a real measurement."""
+    return value is not None and value != MISSING
+
 
 EXTREME_HEADERS = [
     ('hot_days', 'Days above 35°C'),
@@ -60,42 +70,42 @@ def _init_month_bucket():
 
 def _accumulate_month_bucket(bucket, record):
     temperature = bucket['temperature']
-    if record.min_temperature is not None:
+    if _is_valid(record.min_temperature):
         temperature['min'] = (
             record.min_temperature
             if temperature['min'] is None
             else min(temperature['min'], record.min_temperature)
         )
-    if record.max_temperature is not None:
+    if _is_valid(record.max_temperature):
         temperature['max'] = (
             record.max_temperature
             if temperature['max'] is None
             else max(temperature['max'], record.max_temperature)
         )
-    if record.avg_temperature is not None:
+    if _is_valid(record.avg_temperature):
         temperature['avg_sum'] += record.avg_temperature
         temperature['avg_count'] += 1
 
     humidity = bucket['humidity']
-    if record.min_humidity is not None:
+    if _is_valid(record.min_humidity):
         humidity['min'] = (
             record.min_humidity
             if humidity['min'] is None
             else min(humidity['min'], record.min_humidity)
         )
-    if record.max_humidity is not None:
+    if _is_valid(record.max_humidity):
         humidity['max'] = (
             record.max_humidity
             if humidity['max'] is None
             else max(humidity['max'], record.max_humidity)
         )
-    if record.avg_humidity is not None:
+    if _is_valid(record.avg_humidity):
         humidity['avg_sum'] += record.avg_humidity
         humidity['avg_count'] += 1
 
     rainfall = bucket['rainfall']
     rainfall_value = record.daily_rainfall
-    if rainfall_value is not None:
+    if _is_valid(rainfall_value):
         rainfall['min'] = (
             rainfall_value
             if rainfall['min'] is None
@@ -111,7 +121,7 @@ def _accumulate_month_bucket(bucket, record):
         rainfall['total'] += rainfall_value
 
     wind = bucket['wind']
-    if record.avg_windspeed is not None:
+    if _is_valid(record.avg_windspeed):
         wind['avg_sum'] += record.avg_windspeed
         wind['avg_count'] += 1
         wind['max'] = (
@@ -121,11 +131,11 @@ def _accumulate_month_bucket(bucket, record):
         )
 
     extremes = bucket['extremes']
-    if record.max_temperature is not None and record.max_temperature > 35:
+    if _is_valid(record.max_temperature) and record.max_temperature > 35:
         extremes['hot_days'] += 1
-    if record.min_temperature is not None and record.min_temperature < 0:
+    if _is_valid(record.min_temperature) and record.min_temperature < 0:
         extremes['cold_days'] += 1
-    if rainfall_value is not None:
+    if _is_valid(rainfall_value):
         if rainfall_value > 20:
             extremes['heavy_rain_days'] += 1
         if rainfall_value == 0:
@@ -248,7 +258,7 @@ def _build_annual_records(queryset):
 
 
 def _round_value(value):
-    if value is None:
+    if not _is_valid(value):
         return None
     return round(float(value), 1)
 
@@ -378,7 +388,9 @@ def _build_historical_monthly_rainfall(queryset):
     Returns a dict with month numbers (1-12) as keys and average rainfall as values.
     """
     monthly_totals = {}
-    year_months = queryset.values('year', 'month').annotate(
+    year_months = queryset.exclude(daily_rainfall=MISSING).values(
+        'year', 'month'
+    ).annotate(
         monthly_total=Sum('daily_rainfall')
     ).order_by('year', 'month')
 
@@ -629,29 +641,33 @@ class ClimateSiteView(TemplateView):
         context['availability'] = availability
         context['has_chart_data'] = any(availability.values())
 
-        # Calculate statistics
+        # Calculate statistics — NullIf ensures -999 sentinel rows are
+        # excluded from every aggregate just like genuine NULLs.
+        def _ni(field):
+            return NullIf(field, Value(MISSING))
+
         stats = climate_data.aggregate(
-            avg_temp=Avg('avg_temperature'),
-            min_temp=Min('min_temperature'),
-            max_temp=Max('max_temperature'),
-            avg_humidity=Avg('avg_humidity'),
-            min_humidity=Min('min_humidity'),
-            max_humidity=Max('max_humidity'),
-            avg_windspeed=Avg('avg_windspeed'),
-            total_rainfall=Sum('daily_rainfall'),
-            max_rainfall=Max('daily_rainfall'),
+            avg_temp=Avg(_ni('avg_temperature')),
+            min_temp=Min(_ni('min_temperature')),
+            max_temp=Max(_ni('max_temperature')),
+            avg_humidity=Avg(_ni('avg_humidity')),
+            min_humidity=Min(_ni('min_humidity')),
+            max_humidity=Max(_ni('max_humidity')),
+            avg_windspeed=Avg(_ni('avg_windspeed')),
+            total_rainfall=Sum(_ni('daily_rainfall')),
+            max_rainfall=Max(_ni('daily_rainfall')),
             record_count=Count('id')
         )
         stats_overall = climate_data_by_site.aggregate(
-            avg_temp=Avg('avg_temperature'),
-            min_temp=Min('min_temperature'),
-            max_temp=Max('max_temperature'),
-            avg_humidity=Avg('avg_humidity'),
-            min_humidity=Min('min_humidity'),
-            max_humidity=Max('max_humidity'),
-            avg_windspeed=Avg('avg_windspeed'),
-            total_rainfall=Sum('daily_rainfall'),
-            max_rainfall=Max('daily_rainfall'),
+            avg_temp=Avg(_ni('avg_temperature')),
+            min_temp=Min(_ni('min_temperature')),
+            max_temp=Max(_ni('max_temperature')),
+            avg_humidity=Avg(_ni('avg_humidity')),
+            min_humidity=Min(_ni('min_humidity')),
+            max_humidity=Max(_ni('max_humidity')),
+            avg_windspeed=Avg(_ni('avg_windspeed')),
+            total_rainfall=Sum(_ni('daily_rainfall')),
+            max_rainfall=Max(_ni('daily_rainfall')),
         )
         context['stats'] = stats
         context['stats_overall'] = stats_overall
@@ -707,14 +723,16 @@ class ClimateSiteView(TemplateView):
             for record in climate_data:
                 daily_records_list.append({
                     'date': record.date.strftime('%Y-%m-%d'),
-                    'avg_temperature': float(record.avg_temperature) if record.avg_temperature else None,
-                    'min_temperature': float(record.min_temperature) if record.min_temperature else None,
-                    'max_temperature': float(record.max_temperature) if record.max_temperature else None,
-                    'avg_humidity': float(record.avg_humidity) if record.avg_humidity else None,
-                    'min_humidity': float(record.min_humidity) if record.min_humidity else None,
-                    'max_humidity': float(record.max_humidity) if record.max_humidity else None,
-                    'avg_windspeed': float(record.avg_windspeed) if record.avg_windspeed else None,
-                    'daily_rainfall': float(record.daily_rainfall) if record.daily_rainfall else None,
+                    # Use `is not None` so that genuine zeros and -999 sentinels
+                    # are both preserved verbatim in the daily CSV download.
+                    'avg_temperature': float(record.avg_temperature) if record.avg_temperature is not None else None,
+                    'min_temperature': float(record.min_temperature) if record.min_temperature is not None else None,
+                    'max_temperature': float(record.max_temperature) if record.max_temperature is not None else None,
+                    'avg_humidity': float(record.avg_humidity) if record.avg_humidity is not None else None,
+                    'min_humidity': float(record.min_humidity) if record.min_humidity is not None else None,
+                    'max_humidity': float(record.max_humidity) if record.max_humidity is not None else None,
+                    'avg_windspeed': float(record.avg_windspeed) if record.avg_windspeed is not None else None,
+                    'daily_rainfall': float(record.daily_rainfall) if record.daily_rainfall is not None else None,
                     'flag': record.flag
                 })
             context['daily_records_json'] = json.dumps(daily_records_list, cls=DjangoJSONEncoder)
