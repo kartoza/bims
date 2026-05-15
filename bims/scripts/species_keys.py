@@ -46,6 +46,11 @@ BIOGRAPHIC_DISTRIBUTIONS = [
 ]
 REFERENCES = 'References'
 
+SANBI_2016_BACKCAST = '2016 SANBI backcast'
+SANBI_2026_REDLIST = '2026 SANBI Red List'
+
+INLCUDE_IN_RLI = 'Include in calculation'
+
 PARENT_RANKS = {
     'KINGDOM': None,
     'PHYLUM': KINGDOM,

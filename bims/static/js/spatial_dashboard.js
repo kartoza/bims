@@ -770,6 +770,98 @@
             setSectionState(rliSection, 'error');
         });
 
+        const nationalConsSection = document.getElementById('national-cons-status-section');
+        if (nationalConsSection) {
+            const nationalConsChartEl = document.getElementById('national-cons-status-chart');
+            setSectionState(nationalConsSection, 'loading');
+            fetchWithPoll('/api/spatial-dashboard/national-cons-status/' + queryString, function (data) {
+                const series = (data && data.series) ? data.series : [];
+                const aggregate = (data && data.aggregate) ? data.aggregate : [];
+                if (series.length === 0 && aggregate.length === 0) {
+                    nationalConsChartEl.parentNode.innerHTML = '<div class="spatial-dashboard-placeholder">No results found.</div>';
+                    setSectionState(nationalConsSection, 'ready');
+                    return;
+                }
+
+                const xLabels = aggregate.map(function (p) { return p.label; });
+
+                const palette = [
+                    '#1976d2', '#388e3c', '#f57c00', '#7b1fa2', '#00796b',
+                    '#c2185b', '#5d4037', '#455a64', '#512da8', '#0097a7',
+                    '#689f38', '#fbc02d'
+                ];
+
+                const datasets = series.map(function (item, idx) {
+                    return {
+                        label: item.name,
+                        data: xLabels.map(function (lbl) {
+                            const pt = item.points.find(function (p) { return p.label === lbl; });
+                            return pt ? pt.value : null;
+                        }),
+                        borderColor: palette[idx % palette.length],
+                        backgroundColor: 'transparent',
+                        fill: false,
+                        lineTension: 0,
+                        pointRadius: 4,
+                        spanGaps: false,
+                    };
+                });
+
+                if (aggregate.length > 0) {
+                    datasets.unshift({
+                        label: 'Aggregate',
+                        data: aggregate.map(function (p) { return p.value; }),
+                        borderColor: '#000',
+                        backgroundColor: 'transparent',
+                        fill: false,
+                        borderDash: [6, 4],
+                        lineTension: 0,
+                        pointRadius: 3,
+                    });
+                }
+
+                if (typeof Chart !== 'undefined') {
+                    if (nationalConsChartEl._chartInstance) {
+                        nationalConsChartEl._chartInstance.destroy();
+                    }
+                    nationalConsChartEl._chartInstance = new Chart(nationalConsChartEl.getContext('2d'), {
+                        type: 'line',
+                        data: {labels: xLabels, datasets: datasets},
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            legend: {position: 'right'},
+                            scales: {
+                                xAxes: [{
+                                    scaleLabel: {display: true, labelString: 'Assessment'},
+                                }],
+                                yAxes: [{
+                                    ticks: {
+                                        min: 0,
+                                        max: 1,
+                                        callback: function (value) { return value.toFixed(2); }
+                                    },
+                                    scaleLabel: {display: true, labelString: 'Red List Index'}
+                                }]
+                            },
+                            tooltips: {
+                                callbacks: {
+                                    label: function (tooltipItem, chartData) {
+                                        const dataset = chartData.datasets[tooltipItem.datasetIndex];
+                                        return dataset.label + ': ' + parseFloat(tooltipItem.yLabel).toFixed(3);
+                                    }
+                                }
+                            }
+                        }
+                    });
+                }
+
+                setSectionState(nationalConsSection, 'ready');
+            }, function () {
+                setSectionState(nationalConsSection, 'error');
+            });
+        }
+
         var speciesDownloadBtn = document.getElementById('species-download-btn');
         var speciesDownloadStatus = document.getElementById('species-download-status');
         if (speciesDownloadBtn) {
@@ -841,6 +933,14 @@
                     showDownloadPopup('CHART', 'IUCN Red List Index of species (RLI)', function (downloadRequestId) {
                         downloadCanvasAsPng(rliChartEl, 'red-list-index', downloadRequestId);
                     });
+                }
+                if (type === 'national-cons-status') {
+                    var nationalChartEl = document.getElementById('national-cons-status-chart');
+                    if (nationalChartEl) {
+                        showDownloadPopup('CHART', 'National Conservation Status', function (downloadRequestId) {
+                            downloadCanvasAsPng(nationalChartEl, 'national-conservation-status', downloadRequestId);
+                        });
+                    }
                 }
                 if (type === 'cons-status-per-module') {
                     showDownloadPopup('CHART', 'Conservation Status Global (IUCN)', function (downloadRequestId) {

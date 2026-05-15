@@ -286,6 +286,7 @@ def spatial_dashboard_rli(search_parameters=None, search_process_id=None):
                 taxonomy__taxonomic_status='ACCEPTED',
                 taxonomy__rank__in=SPECIES_RANKS,
                 taxonomy__origin__origin_key='indigenous',
+                taxonomy__include_in_rli=True,
             ).values(
                 'taxonomy_id', 'module_group__name'
             ).distinct()
@@ -751,3 +752,142 @@ def spatial_dashboard_species_download(search_parameters=None, search_process_id
         'Search %s is already being processed by another worker',
         search_process.process_id
     )
+
+
+@shared_task(name='bims.tasks.spatial_dashboard_national_rli', queue='search')
+def spatial_dashboard_national_cons_status(search_parameters=None, search_process_id=None):
+    """Compute RLI values per taxon module and in aggregate for three national
+    assessments: 2016 SANBI backcast, 2026 SANBI Red List, and current IUCN
+    status.  Output mirrors the IUCN RLI format (series + aggregate).
+    """
+    from collections import defaultdict
+    from bims.utils.celery import memcache_lock
+    from bims.api_views.search import CollectionSearch
+    from bims.models.search_process import (
+        SearchProcess,
+        SEARCH_PROCESSING,
+        SEARCH_FINISHED,
+    )
+    from bims.models.taxon_conservation_assessment import TaxonNationalConservationAssessment
+    from bims.models.taxonomy import Taxonomy
+    from bims.scripts.species_keys import SANBI_2016_BACKCAST, SANBI_2026_REDLIST
+
+    SPECIES_RANKS = ['SPECIES', 'SUBSPECIES', 'VARIETY']
+    DD_CATEGORIES = {'DD', 'DDD', 'DDT'}
+
+    ASSESSMENT_ORDER = [SANBI_2016_BACKCAST, SANBI_2026_REDLIST, 'Current IUCN Status']
+
+    if search_parameters is None:
+        search_parameters = {}
+
+    try:
+        search_process = SearchProcess.objects.get(id=search_process_id)
+    except SearchProcess.DoesNotExist:
+        return
+
+    lock_id = '{0}-lock-{1}'.format(search_process.file_path, search_process.process_id)
+    oid = '{0}'.format(search_process.process_id)
+
+    with memcache_lock(lock_id, oid) as acquired:
+        if not acquired:
+            logger.info(
+                'Search %s is already being processed by another worker',
+                search_process.process_id
+            )
+            return
+
+        search_process.set_status(SEARCH_PROCESSING)
+
+        if search_process.requester and 'requester' not in search_parameters:
+            search_parameters['requester'] = search_process.requester.id
+
+        search = CollectionSearch(search_parameters)
+        collection_results = search.process_search()
+
+        taxa_modules_qs = collection_results.filter(
+            taxonomy__taxonomic_status='ACCEPTED',
+            taxonomy__rank__in=SPECIES_RANKS,
+            taxonomy__origin__origin_key='indigenous',
+            taxonomy__include_in_rli=True,
+        ).values('taxonomy_id', 'module_group__name').distinct()
+
+        taxa_to_modules = defaultdict(set)
+        for row in taxa_modules_qs:
+            tid = row['taxonomy_id']
+            module = row['module_group__name'] or 'Unknown'
+            taxa_to_modules[tid].add(module)
+
+        taxonomy_ids = list(taxa_to_modules.keys())
+
+        if not taxonomy_ids:
+            search_process.set_status(SEARCH_FINISHED, False)
+            search_process.save_to_file({'series': [], 'aggregate': []})
+            return
+
+        national_rows = (
+            TaxonNationalConservationAssessment.objects
+            .filter(taxonomy_id__in=taxonomy_ids)
+            .exclude(iucn_status__isnull=True)
+            .values('taxonomy_id', 'assessment_label', 'iucn_status__category')
+        )
+        assessment_statuses = defaultdict(list)
+        for row in national_rows:
+            label = row['assessment_label']
+            if label in (SANBI_2016_BACKCAST, SANBI_2026_REDLIST):
+                assessment_statuses[label].append(
+                    (row['taxonomy_id'], row['iucn_status__category'] or '')
+                )
+
+        for row in Taxonomy.objects.filter(
+            id__in=taxonomy_ids
+        ).exclude(iucn_status__isnull=True).values('id', 'iucn_status__category'):
+            assessment_statuses['Current IUCN Status'].append(
+                (row['id'], row['iucn_status__category'] or '')
+            )
+
+        label_to_idx = {label: idx for idx, label in enumerate(ASSESSMENT_ORDER)}
+        year_taxa_statuses = {
+            label_to_idx[label]: statuses
+            for label, statuses in assessment_statuses.items()
+            if label in label_to_idx
+        }
+
+        per_module_year, aggregate_year = _compute_rli(
+            taxa_to_modules, year_taxa_statuses, DD_CATEGORIES,
+            use_fixed_pool=False,
+        )
+
+        idx_to_label = {idx: label for label, idx in label_to_idx.items()}
+
+        module_series = defaultdict(list)
+        for (mod, idx), data in per_module_year.items():
+            module_series[mod].append({
+                'label': idx_to_label[idx],
+                'value': data['rli'],
+                'num_assessed': data['assessed'],
+                'num_dd': data['dd'],
+                'categories': data['categories'],
+            })
+
+        series = []
+        for mod, points in module_series.items():
+            if not any(p['categories'] for p in points):
+                continue
+            series.append({
+                'name': mod,
+                'points': sorted(points, key=lambda p: label_to_idx[p['label']]),
+            })
+
+        aggregate = []
+        for idx, data in aggregate_year.items():
+            aggregate.append({
+                'label': idx_to_label[idx],
+                'value': data['rli'],
+                'num_assessed': data['assessed'],
+                'num_dd': data['dd'],
+                'categories': data['categories'],
+            })
+        aggregate = sorted(aggregate, key=lambda p: label_to_idx[p['label']])
+
+        search_process.set_status(SEARCH_FINISHED, False)
+        search_process.save_to_file({'series': series, 'aggregate': aggregate})

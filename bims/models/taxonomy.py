@@ -194,6 +194,11 @@ class AbstractTaxonomy(AbstractValidation):
         blank=True,
     )
 
+    include_in_rli = models.BooleanField(
+        verbose_name='Include in RLI',
+        default=False,
+    )
+
     iucn_status = models.ForeignKey(
         IUCNStatus,
         models.SET_NULL,

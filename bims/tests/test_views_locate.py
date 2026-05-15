@@ -2,6 +2,7 @@
 """Test Views Locate."""
 
 import os
+from unittest.mock import patch, Mock
 from django.test import SimpleTestCase
 
 from bims.views.locate import (
@@ -45,14 +46,21 @@ class TestLocateView(SimpleTestCase):
         for farm_id in farm_ids:
             self.assertIsNotNone(farm_id)
 
-    def test_get_farm(self):
+    @patch('bims.views.locate.requests.get')
+    def test_get_farm(self, mock_get):
         """Test get_farm"""
+        wfs_document_path = os.path.join(
+            test_data_directory, 'geoserver_farm.xml')
+        with open(wfs_document_path, 'rb') as f:
+            wfs_content = f.read()
+
+        mock_response = Mock()
+        mock_response.content = wfs_content
+        mock_get.return_value = mock_response
+
         farm_id = 'C00100000000000100001'
         farm = get_farm(farm_id)
-        try:
-            self.assertEqual(farm['farm_id'], farm_id)
-        except KeyError:
-            pass
+        self.assertEqual(farm['farm_id'], farm_id)
 
     def test_parse_farm(self):
         """Test parse_farm"""

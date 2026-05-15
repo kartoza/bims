@@ -41,7 +41,7 @@
                     <div class="form-group row">
                         <label for="inputPassword"
                                class="col-sm-2 col-form-label"><b>Taxon Group</b></label>
-                        <div class="col-sm-8">
+                        <div class="col-sm-10">
                             <select class="form-control" name="taxon_group"
                                     id="taxon-group">
                                 {% for taxon_group in taxa_groups %}
@@ -50,9 +50,6 @@
                             </select>
                             <a href="/taxa-management" class="text-muted" style="position: absolute; font-size: 10pt">Link to taxa management</a>
                         </div>
-                        <button type="button" class="btn btn-primary col-sm-2" data-toggle="modal" data-target="#taxonGroupModal">
-                            Add new
-                        </button>
                     </div>
                     <div class="help-block-space"></div>
                     <div class="form-group row">

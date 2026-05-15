@@ -316,6 +316,38 @@
                 </div>
             </div>
         </div>
+
+
+        {% if is_sanparks %}
+        <div class="vertical-space"></div>
+
+        <div class="chart-container" id="national-cons-status-section">
+            <div class="chart-title">
+                Red List Index of species (RLI) - National Assessments
+                <i class="fa fa-info-circle rli-info-icon"
+                   data-toggle="popover"
+                   data-trigger="hover"
+                   data-offset="0,8"
+                   data-content="RLI values (0-1) computed from the current IUCN status, the 2016 SANBI backcast, and the 2026 SANBI Red List."
+                   title="RLI — National Assessments"></i>
+                <i data-download="national-cons-status"
+                   data-toggle="tooltip" data-placement="left"
+                   title="Download chart"
+                   class="fa fa-download pull-right download-icon"></i>
+            </div>
+            <div class="section-loading" data-loading>
+                <div class="spinner"></div>
+                <div>Loading national RLI…</div>
+            </div>
+            <div class="section-error d-none" data-error></div>
+            <div class="d-none" data-body>
+                <div class="cons-status-chart-wrap">
+                    <canvas id="national-cons-status-chart" height="220"></canvas>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
     </div>
 
     {% include 'footer.html' %}
