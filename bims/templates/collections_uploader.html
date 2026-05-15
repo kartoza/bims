@@ -41,13 +41,12 @@
 
                     {% with preferences.SiteSetting.project_name as project_name %}
                         {% if 'sanpark' in project_name %}
+                            <div class="help-block" style="margin-top: 10px;">
+                                This is the generic template.
+                            </div>
                             <p class="mt-2" style="font-size: 11pt; color: #555;">
-                                This is the generic template. For customised templates, go to <a href="/taxa-management">Taxon Management</a> and select the relevant module.
-                                <br/>
-                                The template available for download here is the most comprehensive option and includes fields from multiple sampling methods.
-                                <br/>
                                 If you require a template specific to your sampling method, please navigate to <a href="/taxa-management">Taxon Management</a>, select the relevant module (e.g. Plants), click the pencil icon, scroll to the bottom, and select the appropriate template. The selected template will automatically download as a CSV file.
-                            </p>
+                             </p>
                         {% endif %}
                     {% endwith %}
 
