@@ -147,7 +147,8 @@ from bims.models import (
     OccurrenceUploadTemplate,
     UploadRequest, UploadType, CertaintyHierarchy,
     FilterPanelInfo,
-    TaxonTagDescription
+    TaxonTagDescription,
+    TaxonNationalConservationAssessment
 )
 from bims.models.taxonomy import TaxonTag
 from bims.utils.fetch_gbif import merge_taxa_data
@@ -501,6 +502,16 @@ class IUCNStatusAdmin(OrderedModelAdmin):
         )
 
     iucn_colour.allow_tags = True
+
+
+@admin.register(TaxonNationalConservationAssessment)
+class TaxonNationalConservationAssessmentAdmin(admin.ModelAdmin):
+    list_display = (
+        'id',
+        'taxonomy',
+        'assessment_label',
+        'iucn_status'
+    )
 
 
 class IUCNAssessmentAdmin(admin.ModelAdmin):

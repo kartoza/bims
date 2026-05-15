@@ -1275,13 +1275,18 @@ class TaxaProcessor(object):
             if iucn_status:
                 self._update_taxon_and_proposal(taxonomy, proposal, use_proposal, new_taxon, 'iucn_status', iucn_status)
 
-            national_cons_status = (
-                self.sanbi_national_status(row, SANBI_2026_REDLIST)
-                or self.conservation_status(row, False)
-            )
+            national_cons_status = self.conservation_status(row, False)
             if national_cons_status:
                 self._update_taxon_and_proposal(taxonomy, proposal, use_proposal, new_taxon,
                                                 'national_conservation_status', national_cons_status)
+
+            sanbi_2026_redlist = self.sanbi_national_status(row, SANBI_2026_REDLIST)
+            if sanbi_2026_redlist and taxonomy and taxonomy.pk:
+                TaxonNationalConservationAssessment.objects.update_or_create(
+                    taxonomy=taxonomy,
+                    assessment_label=SANBI_2026_REDLIST,
+                    defaults={'iucn_status': sanbi_2026_redlist},
+                )
 
             sanbi_2016 = self.sanbi_national_status(row, SANBI_2016_BACKCAST)
             if sanbi_2016 and taxonomy and taxonomy.pk:

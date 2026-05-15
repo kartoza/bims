@@ -11,9 +11,14 @@ from bims.models.search_process import (
     SPATIAL_DASHBOARD_RLI,
     SPATIAL_DASHBOARD_MAP,
     SPATIAL_DASHBOARD_SUMMARY,
+    SPATIAL_DASHBOARD_NATIONAL_CONS_STATUS,
 )
 from bims.models.iucn_assessment import IUCNAssessment
+from bims.models.taxon_conservation_assessment import (
+    TaxonNationalConservationAssessment,
+)
 from bims.models.taxon_origin import TaxonOrigin
+from bims.scripts.species_keys import SANBI_2016_BACKCAST, SANBI_2026_REDLIST
 from bims.tests.model_factories import (
     BiologicalCollectionRecordF,
     LocationSiteF,
@@ -939,6 +944,88 @@ class TestSpatialDashboardTasks(FastTenantTestCase):
         # RLI = 1 - (0+2)/(5×2) = 0.8
         point = next(p for p in aggregate if p['year'] == current_year)
         self.assertEqual(point['value'], 0.8)
+
+    # ------------------------------------------------------------------
+    # National RLI
+    # ------------------------------------------------------------------
+
+    @patch('bims.utils.celery.memcache_lock')
+    def test_national_cons_status_task(self, mock_lock):
+        from bims.tasks.spatial_dashboard import spatial_dashboard_national_cons_status
+
+        mock_lock.return_value.__enter__ = lambda s: True
+        mock_lock.return_value.__exit__ = lambda s, *a: None
+
+        iucn_en_national = IUCNStatusF.create(category='EN', national=True)
+        iucn_cr_national = IUCNStatusF.create(category='CR', national=True)
+
+        TaxonNationalConservationAssessment.objects.create(
+            taxonomy=self.taxa_1,
+            assessment_label=SANBI_2016_BACKCAST,
+            iucn_status=iucn_en_national,
+        )
+        TaxonNationalConservationAssessment.objects.create(
+            taxonomy=self.taxa_2,
+            assessment_label=SANBI_2016_BACKCAST,
+            iucn_status=iucn_cr_national,
+        )
+        TaxonNationalConservationAssessment.objects.create(
+            taxonomy=self.taxa_1,
+            assessment_label=SANBI_2026_REDLIST,
+            iucn_status=iucn_cr_national,
+        )
+        TaxonNationalConservationAssessment.objects.create(
+            taxonomy=self.taxa_2,
+            assessment_label=SANBI_2026_REDLIST,
+            iucn_status=iucn_en_national,
+        )
+
+        search_process = self._create_search_process(
+            SPATIAL_DASHBOARD_NATIONAL_CONS_STATUS
+        )
+        spatial_dashboard_national_cons_status(
+            search_parameters=self.search_params,
+            search_process_id=search_process.id,
+        )
+        search_process.refresh_from_db()
+        self.assertTrue(search_process.finished)
+        results = search_process.get_file_if_exits()
+
+        self.assertIn('series', results)
+        self.assertIn('aggregate', results)
+        self.assertEqual(len(results['series']), 1)
+        self.assertEqual(results['series'][0]['name'], 'Fish')
+
+        labels = [p['label'] for p in results['aggregate']]
+        self.assertEqual(labels, [
+            SANBI_2016_BACKCAST,
+            SANBI_2026_REDLIST,
+            'Current IUCN Status',
+        ])
+
+    @patch('bims.utils.celery.memcache_lock')
+    def test_national_cons_status_empty_when_no_eligible_taxa(self, mock_lock):
+        from bims.tasks.spatial_dashboard import spatial_dashboard_national_cons_status
+
+        mock_lock.return_value.__enter__ = lambda s: True
+        mock_lock.return_value.__exit__ = lambda s, *a: None
+
+        self.taxa_1.include_in_rli = False
+        self.taxa_1.save(update_fields=['include_in_rli'])
+        self.taxa_2.include_in_rli = False
+        self.taxa_2.save(update_fields=['include_in_rli'])
+
+        search_process = self._create_search_process(
+            SPATIAL_DASHBOARD_NATIONAL_CONS_STATUS
+        )
+        spatial_dashboard_national_cons_status(
+            search_parameters=self.search_params,
+            search_process_id=search_process.id,
+        )
+        search_process.refresh_from_db()
+        self.assertTrue(search_process.finished)
+        results = search_process.get_file_if_exits()
+        self.assertEqual(results, {'series': [], 'aggregate': []})
 
     # ------------------------------------------------------------------
     # Other tasks

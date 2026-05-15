@@ -12,6 +12,7 @@ from bims.models.search_process import (
     SPATIAL_DASHBOARD_MAP,
     SPATIAL_DASHBOARD_SUMMARY,
     SPATIAL_DASHBOARD_SPECIES_DOWNLOAD,
+    SPATIAL_DASHBOARD_NATIONAL_CONS_STATUS,
     SEARCH_RESULTS,
     SEARCH_PROCESSING
 )
@@ -21,7 +22,8 @@ from bims.tasks.spatial_dashboard import (
     spatial_dashboard_rli,
     spatial_dashboard_map,
     spatial_dashboard_summary,
-    spatial_dashboard_species_download
+    spatial_dashboard_species_download,
+    spatial_dashboard_national_cons_status,
 )
 from bims.utils.search_process import get_or_create_search_process
 
@@ -116,3 +118,8 @@ class SpatialDashboardSummaryApiView(SpatialDashboardBaseApiView):
 class SpatialDashboardSpeciesDownloadApiView(SpatialDashboardBaseApiView):
     search_type = SPATIAL_DASHBOARD_SPECIES_DOWNLOAD
     task = spatial_dashboard_species_download
+
+
+class SpatialDashboardNationalConsStatusApiView(SpatialDashboardBaseApiView):
+    search_type = SPATIAL_DASHBOARD_NATIONAL_CONS_STATUS
+    task = spatial_dashboard_national_cons_status

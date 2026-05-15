@@ -151,7 +151,8 @@ from bims.api_views.spatial_dashboard import (
     SpatialDashboardRliApiView,
     SpatialDashboardMapApiView,
     SpatialDashboardSummaryApiView,
-    SpatialDashboardSpeciesDownloadApiView
+    SpatialDashboardSpeciesDownloadApiView,
+    SpatialDashboardNationalConsStatusApiView,
 )
 
 urlpatterns = [
@@ -204,6 +205,9 @@ urlpatterns = [
     re_path(r'^spatial-dashboard/species-download/$',
         SpatialDashboardSpeciesDownloadApiView.as_view(),
         name='spatial-dashboard-species-download'),
+    re_path(r'^spatial-dashboard/national-cons-status/$',
+        SpatialDashboardNationalConsStatusApiView.as_view(),
+        name='spatial-dashboard-national-cons-status'),
     re_path(r'^taxon/(?P<pk>[0-9]+)/$',
         TaxonDetail.as_view()),
     re_path(r'^taxon-proposal/(?P<pk>[0-9]+)/$',

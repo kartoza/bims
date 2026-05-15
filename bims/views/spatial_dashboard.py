@@ -1,6 +1,7 @@
 # coding=utf-8
 from braces.views import LoginRequiredMixin
 from django.views.generic import TemplateView
+from preferences import preferences
 
 from bims.models.basemap_layer import BaseMapLayer
 from bims.serializers.basemap_serializer import BaseMapLayerSerializer
@@ -18,5 +19,8 @@ class SpatialDashboardView(LoginRequiredMixin, TemplateView):
         ).data
         context['geoserver_public_location'] = get_key(
             'GEOSERVER_PUBLIC_LOCATION'
+        )
+        context['is_sanparks'] = (
+            preferences.SiteSetting.site_code_generator == 'sanparks'
         )
         return context
