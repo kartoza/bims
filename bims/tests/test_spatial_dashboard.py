@@ -222,7 +222,6 @@ class TestSpatialDashboardTasks(FastTenantTestCase):
         iucn_lc = IUCNStatusF.create(category='LC', national=False)
         iucn_vu = IUCNStatusF.create(category='VU', national=False)
 
-        # Both taxa: accepted, species rank, native — included in all filters.
         self.taxa_1 = TaxonomyF.create(
             scientific_name='Species A',
             canonical_name='Species A',
@@ -231,6 +230,7 @@ class TestSpatialDashboardTasks(FastTenantTestCase):
             origin=_native_origin(),
             iucn_status=iucn_lc,
             endemism=endemism,
+            include_in_rli=True,
         )
         self.taxa_2 = TaxonomyF.create(
             scientific_name='Species B',
@@ -240,6 +240,7 @@ class TestSpatialDashboardTasks(FastTenantTestCase):
             origin=_native_origin(),
             iucn_status=iucn_vu,
             endemism=endemism,
+            include_in_rli=True,
         )
 
         site = LocationSiteF.create()
@@ -495,6 +496,7 @@ class TestSpatialDashboardTasks(FastTenantTestCase):
             taxonomic_status='ACCEPTED',
             origin=_native_origin(),
             iucn_status=iucn_lc,
+            include_in_rli=True,
         )
         taxa_d = TaxonomyF.create(
             scientific_name='Species D',
@@ -503,6 +505,7 @@ class TestSpatialDashboardTasks(FastTenantTestCase):
             taxonomic_status='ACCEPTED',
             origin=_native_origin(),
             iucn_status=iucn_lc,
+            include_in_rli=True,
         )
         taxa_e = TaxonomyF.create(
             scientific_name='Species E',
@@ -511,6 +514,7 @@ class TestSpatialDashboardTasks(FastTenantTestCase):
             taxonomic_status='ACCEPTED',
             origin=_native_origin(),
             iucn_status=iucn_lc,
+            include_in_rli=True,
         )
         for taxon in (taxa_c, taxa_d, taxa_e):
             BiologicalCollectionRecordF.create(
@@ -674,7 +678,8 @@ class TestSpatialDashboardTasks(FastTenantTestCase):
         mock_lock.return_value.__exit__ = lambda s, *a: None
 
         iucn_dd = IUCNStatusF.create(category='DD', national=False)
-        # DD taxon is native/accepted/species so it enters the pool
+        # DD taxon is native/accepted/species/flagged — enters the pool but
+        # excluded from the RLI value itself.
         taxa_dd = TaxonomyF.create(
             scientific_name='Species DD',
             canonical_name='Species DD',
@@ -682,6 +687,7 @@ class TestSpatialDashboardTasks(FastTenantTestCase):
             taxonomic_status='ACCEPTED',
             origin=_native_origin(),
             iucn_status=iucn_dd,
+            include_in_rli=True,
         )
         site = LocationSiteF.create()
         BiologicalCollectionRecordF.create(
@@ -842,6 +848,66 @@ class TestSpatialDashboardTasks(FastTenantTestCase):
         # Only taxa_1 (LC, accepted, species) contributes
         self.assertEqual(year_2020['num_assessed'], 1)
         self.assertNotIn('EN', year_2020['categories'])
+
+    # ------------------------------------------------------------------
+    # RLI — include_in_rli flag
+    # ------------------------------------------------------------------
+
+    @patch('bims.utils.celery.memcache_lock')
+    def test_rli_excludes_taxa_not_flagged(self, mock_lock):
+        """Taxa without include_in_rli=True must not contribute to the RLI,
+        even if they are native, accepted, and species-rank."""
+        from bims.tasks.spatial_dashboard import spatial_dashboard_rli
+
+        mock_lock.return_value.__enter__ = lambda s: True
+        mock_lock.return_value.__exit__ = lambda s, *a: None
+
+        iucn_cr = IUCNStatusF.create(category='CR', national=False)
+        site = LocationSiteF.create()
+
+        # Native, accepted, species — but NOT flagged for RLI
+        unflagged_taxon = TaxonomyF.create(
+            scientific_name='Unflagged CR Species',
+            canonical_name='Unflagged CR Species',
+            rank='SPECIES',
+            taxonomic_status='ACCEPTED',
+            origin=_native_origin(),
+            iucn_status=iucn_cr,
+            include_in_rli=False,
+        )
+        BiologicalCollectionRecordF.create(
+            taxonomy=unflagged_taxon,
+            collection_date='2020-01-01',
+            site=site,
+            module_group=self.module,
+            validated=True,
+        )
+
+        # taxa_1 (LC, flagged) and unflagged_taxon (CR, not flagged) both assessed
+        IUCNAssessment.objects.create(
+            taxonomy=self.taxa_1, assessment_id=6001,
+            year_published=2020, red_list_category_code='LC',
+        )
+        IUCNAssessment.objects.create(
+            taxonomy=unflagged_taxon, assessment_id=6002,
+            year_published=2020, red_list_category_code='CR',
+        )
+
+        search_process = self._create_search_process(SPATIAL_DASHBOARD_RLI)
+        spatial_dashboard_rli(
+            search_parameters=self.search_params,
+            search_process_id=search_process.id,
+        )
+        search_process.refresh_from_db()
+        results = search_process.get_file_if_exits()
+        aggregate = results['aggregate']
+
+        year_2020 = next(p for p in aggregate if p['year'] == 2020)
+        # Only taxa_1 (LC) contributes; unflagged CR taxon must be excluded
+        self.assertEqual(year_2020['num_assessed'], 1)
+        # RLI = 1 - 0/(5×1) = 1.0
+        self.assertEqual(year_2020['value'], 1.0)
+        self.assertNotIn('CR', year_2020['categories'])
 
     # ------------------------------------------------------------------
     # RLI — fallback to current iucn_status

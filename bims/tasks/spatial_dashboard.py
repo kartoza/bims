@@ -286,6 +286,7 @@ def spatial_dashboard_rli(search_parameters=None, search_process_id=None):
                 taxonomy__taxonomic_status='ACCEPTED',
                 taxonomy__rank__in=SPECIES_RANKS,
                 taxonomy__origin__origin_key='indigenous',
+                taxonomy__include_in_rli=True,
             ).values(
                 'taxonomy_id', 'module_group__name'
             ).distinct()

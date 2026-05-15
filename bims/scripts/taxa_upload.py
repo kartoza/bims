@@ -21,6 +21,7 @@ from bims.models import (
     ORIGIN_CATEGORIES, TaxonTag, SourceReference,
     SourceReferenceBibliography,
     Invasion, SpeciesGroup, TaxonOrigin,
+    TaxonNationalConservationAssessment,
 )
 from bims.templatetags import is_fada_site
 from bims.utils.fetch_gbif import (
@@ -356,6 +357,27 @@ class TaxaProcessor(object):
             iucn_status = IUCNStatus.objects.filter(
                 category=category,
                 national=national
+            ).order_by('id').first()
+        return iucn_status
+
+    def sanbi_national_status(self, row, column_key):
+        """Return a national IUCNStatus for a SANBI-specific column."""
+        cons_status = self.get_row_value(row, column_key)
+        if not cons_status:
+            return None
+        key = str(cons_status).strip().lower()
+        category = IUCN_CATEGORIES.get(key)
+        if not category:
+            return None
+        try:
+            iucn_status, _ = IUCNStatus.objects.get_or_create(
+                category=category,
+                national=True
+            )
+        except IUCNStatus.MultipleObjectsReturned:
+            iucn_status = IUCNStatus.objects.filter(
+                category=category,
+                national=True
             ).order_by('id').first()
         return iucn_status
 
@@ -1249,14 +1271,32 @@ class TaxaProcessor(object):
             if endemism_obj:
                 self._update_taxon_and_proposal(taxonomy, proposal, use_proposal, new_taxon, 'endemism', endemism_obj)
 
-            # Conservation (global + national)
             iucn_status = self.conservation_status(row, True)
             if iucn_status:
                 self._update_taxon_and_proposal(taxonomy, proposal, use_proposal, new_taxon, 'iucn_status', iucn_status)
 
-            national_cons_status = self.conservation_status(row, False)
+            national_cons_status = (
+                self.sanbi_national_status(row, SANBI_2026_REDLIST)
+                or self.conservation_status(row, False)
+            )
             if national_cons_status:
-                self._update_taxon_and_proposal(taxonomy, proposal, use_proposal, new_taxon, 'national_conservation_status', national_cons_status)
+                self._update_taxon_and_proposal(taxonomy, proposal, use_proposal, new_taxon,
+                                                'national_conservation_status', national_cons_status)
+
+            sanbi_2016 = self.sanbi_national_status(row, SANBI_2016_BACKCAST)
+            if sanbi_2016 and taxonomy and taxonomy.pk:
+                TaxonNationalConservationAssessment.objects.update_or_create(
+                    taxonomy=taxonomy,
+                    assessment_label=SANBI_2016_BACKCAST,
+                    defaults={'iucn_status': sanbi_2016},
+                )
+
+            # Include in RLI
+            include_in_rli_val = self.get_row_value(row, INLCUDE_IN_RLI)
+            if include_in_rli_val is not None:
+                include_in_rli = str(include_in_rli_val).strip().lower() in ('yes', '1', 'true')
+                self._update_taxon_and_proposal(
+                    taxonomy, proposal, use_proposal, new_taxon, 'include_in_rli', include_in_rli)
 
             # References
             msg, reference = self.source_reference(row)
