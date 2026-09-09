@@ -270,7 +270,7 @@ def harvest_collections(session_id, resume=False, chunk_size=250, schema_name='p
             harvest_session.save()
 
             import_gbif_occurrences(
-                taxonomy_ids=[t.gbif_key for t in chunk if t.gbif_key],
+                taxonomy_ids=[t.col_id for t in chunk if t.col_id],
                 log_file_path=harvest_session.log_file.path,
                 session_id=session_id,
                 taxon_group=harvest_session.module_group,
