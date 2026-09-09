@@ -39,6 +39,7 @@ from bims.models.location_site import generate_site_code
 from bims.models.survey import Survey
 from bims.scripts.extract_dataset_keys import create_dataset_from_gbif
 from bims.utils.gbif import round_coordinates, ACCEPTED_TAXON_KEY
+from bims.utils.col import COL_CHECKLIST_KEY
 
 logger = logging.getLogger('bims')
 
@@ -454,7 +455,7 @@ def process_gbif_row(
     taxonomy = None
 
     if taxon_key:
-        taxonomy = Taxonomy.objects.filter(gbif_key=taxon_key).first()
+        taxonomy = Taxonomy.objects.filter(col_id=taxon_key).first()
 
     if not taxonomy:
         if accepted_taxon_key and accepted_taxon_key != taxon_key:
@@ -918,7 +919,12 @@ def import_gbif_occurrences(
         predicates = {
             "type": "and",
             "predicates": [
-                {"type": "in", "key": "TAXON_KEY", "values": taxonomy_ids},
+                {
+                    "type": "in",
+                    "key": "TAXON_KEY",
+                    "values": taxonomy_ids,
+                    "checklistKey": COL_CHECKLIST_KEY,
+                },
                 {"type": "equals", "key": "HAS_COORDINATE", "value": "true"},
                 {"type": "equals", "key": "HAS_GEOSPATIAL_ISSUE", "value": "false"},
                 {"type": "in", "key": "BASIS_OF_RECORD", "values": ACCEPTED_BASIS_OF_RECORD},
@@ -958,6 +964,7 @@ def import_gbif_occurrences(
             predicate=predicates,
             description=f"Harvesting occurrences for multiple taxa",
             log=log,
+            checklist_key=COL_CHECKLIST_KEY,
         )
 
         max_retries = 10
@@ -983,6 +990,7 @@ def import_gbif_occurrences(
                 predicate=predicates,
                 description="Harvesting occurrences for multiple taxa",
                 log=log,
+                checklist_key=COL_CHECKLIST_KEY,
             )
 
         if not key:
@@ -1069,10 +1077,19 @@ def import_gbif_occurrences(
 
     message = ''
     try:
+        if not taxonomy_ids:
+            message = (
+                "No taxa in this chunk have a col_id set; skipping GBIF fetch. "
+                "Resolve col_id for these taxa (see bims.utils.col.resolve_col_id) "
+                "before harvesting."
+            )
+            log_to_file_or_logger(log_file_path, message=message, is_error=True)
+            return message
+
         chunk_first_id = taxonomy_ids[0]
         chunk_last_id = taxonomy_ids[-1]
-        chunk_first = Taxonomy.objects.filter(gbif_key=chunk_first_id).first()
-        chunk_last = Taxonomy.objects.filter(gbif_key=chunk_last_id).first()
+        chunk_first = Taxonomy.objects.filter(col_id=chunk_first_id).first()
+        chunk_last = Taxonomy.objects.filter(col_id=chunk_last_id).first()
 
         log_to_file_or_logger(log_file_path, message=f'Fetching GBIF data for {chunk_first} ... {chunk_last}')
 
