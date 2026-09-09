@@ -216,7 +216,7 @@ class TestProcessGbifRowExclusionRules(FastTenantTestCase):
     """Verify that process_gbif_row skips rows that match exclusion rules."""
 
     def setUp(self):
-        self.taxonomy = TaxonomyF.create(gbif_key=99999)
+        self.taxonomy = TaxonomyF.create(col_id="99999")
         self.owner = UserF.create(username="excl_test_user")
         self.source_reference = SourceReferenceDatabaseF.create(source_name="Exclusion Test")
         self.taxon_group = TaxonGroupF.create()

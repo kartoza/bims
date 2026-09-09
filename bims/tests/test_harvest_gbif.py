@@ -227,7 +227,7 @@ class TestHarvestGbif(FastTenantTestCase):
     """Exercise the GBIF harvest pipeline with fully mocked network helpers."""
 
     def setUp(self):
-        self.taxonomy = TaxonomyF.create(gbif_key=1)
+        self.taxonomy = TaxonomyF.create(col_id="1")
         os.environ.setdefault("GBIF_USERNAME", "user")
         os.environ.setdefault("GBIF_PASSWORD", "pass")
 
@@ -402,7 +402,7 @@ class TestHarvestGbif(FastTenantTestCase):
             gbif_id="9999001",
             lon=str(new_lon),
             lat=str(new_lat),
-            taxon_key=str(self.taxonomy.gbif_key),
+            taxon_key=str(self.taxonomy.col_id),
         )
         with mock.patch(
             "bims.scripts.import_gbif_occurrences.download_archive",
@@ -464,7 +464,7 @@ class TestHarvestGbif(FastTenantTestCase):
             gbif_id="9999002",
             lon=str(new_lon),
             lat=str(new_lat),
-            taxon_key=str(self.taxonomy.gbif_key),
+            taxon_key=str(self.taxonomy.col_id),
         )
         with mock.patch(
             "bims.scripts.import_gbif_occurrences.download_archive",
