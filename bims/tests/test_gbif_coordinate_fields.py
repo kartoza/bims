@@ -34,7 +34,7 @@ class TestGbifCoordinateFields(FastTenantTestCase):
 
     def setUp(self):
         """Set up test fixtures."""
-        self.taxonomy = TaxonomyF.create(gbif_key=12345)
+        self.taxonomy = TaxonomyF.create(col_id="12345")
         self.owner = UserF.create(username="test_user")
         self.source_reference = SourceReferenceDatabaseF.create(
             source_name="Test Source"

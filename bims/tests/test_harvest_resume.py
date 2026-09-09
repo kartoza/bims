@@ -193,12 +193,12 @@ class TestHarvestCollectionsResume(TestCase):
         self.user = UserF.create()
         self.taxon_group = TaxonGroupF.create(name='Test Group')
         self.taxonomy1 = TaxonomyF.create(
-            gbif_key=1,
+            col_id='1',
             rank='SPECIES',
             canonical_name='Species One'
         )
         self.taxonomy2 = TaxonomyF.create(
-            gbif_key=2,
+            col_id='2',
             rank='SPECIES',
             canonical_name='Species Two'
         )
@@ -321,7 +321,7 @@ class TestHarvestCollectionsResume(TestCase):
         taxonomy = TaxonomyF.create(
             scientific_name='Test Species',
             canonical_name='Test Species',
-            gbif_key=12345
+            col_id='12345'
         )
         self.taxon_group.taxonomies.add(taxonomy)
 
@@ -405,7 +405,7 @@ class TestHarvestCollectionsResume(TestCase):
         taxonomy = TaxonomyF.create(
             scientific_name='Test Species',
             canonical_name='Test Species',
-            gbif_key=12345
+            col_id='12345'
         )
         self.taxon_group.taxonomies.add(taxonomy)
 
@@ -486,7 +486,7 @@ class TestHarvestCollectionsResume(TestCase):
         taxonomy = TaxonomyF.create(
             scientific_name='Test Species',
             canonical_name='Test Species',
-            gbif_key=12345
+            col_id='12345'
         )
         self.taxon_group.taxonomies.add(taxonomy)
 
