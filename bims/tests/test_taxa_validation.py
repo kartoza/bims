@@ -1,7 +1,8 @@
 from django_tenants.test.cases import FastTenantTestCase
 
 from bims.scripts.species_keys import (
-    TAXON, TAXON_RANK, TAXONOMIC_STATUS, AUTHORS, ACCEPTED_TAXON
+    TAXON, TAXON_RANK, TAXONOMIC_STATUS, AUTHORS, ACCEPTED_TAXON,
+    PHYLUM, SUBPHYLUM, CLASS, SUBCLASS, ON_GBIF, GBIF_LINK
 )
 from bims.scripts.taxa_validation import TaxaValidator
 from bims.tests.model_factories import UploadSessionF
@@ -124,3 +125,138 @@ class TestTaxaValidatorHomonymy(FastTenantTestCase):
         self.assertTrue(
             any('Duplicate taxon name' in m for m in messages_row1)
         )
+
+
+class TestTaxaValidatorParentNameConflict(FastTenantTestCase):
+    """Tests for TaxaValidator's classification-chain name conflict check."""
+
+    def setUp(self):
+        self.upload_session = UploadSessionF.create()
+        self.validator = TaxaValidator(self.upload_session)
+
+    def test_phylum_same_name_as_class_errors(self):
+        row = {
+            PHYLUM: 'Gastrotricha',
+            CLASS: 'Gastrotricha',
+            TAXON: 'Gastrotricha',
+            TAXON_RANK: 'Class',
+        }
+
+        messages = self.validator._check_parent_name_conflict(row)
+
+        self.assertTrue(
+            any(
+                "Parent 'Gastrotricha' (PHYLUM) cannot have the same "
+                "name as 'Gastrotricha' (CLASS)" in m
+                for m in messages
+            )
+        )
+
+    def test_subclass_same_name_as_class_is_allowed(self):
+        row = {
+            CLASS: 'Insecta',
+            SUBCLASS: 'Insecta',
+        }
+
+        messages = self.validator._check_parent_name_conflict(row)
+
+        self.assertFalse(messages)
+
+    def test_non_adjacent_ranks_with_same_name_via_gap_still_checked(self):
+        """When an intermediate rank column is blank, the check should
+        still compare against the nearest filled ancestor."""
+        row = {
+            PHYLUM: 'Gastrotricha',
+            SUBPHYLUM: '',
+            CLASS: 'Gastrotricha',
+        }
+
+        messages = self.validator._check_parent_name_conflict(row)
+
+        self.assertTrue(
+            any('PHYLUM' in m and 'CLASS' in m for m in messages)
+        )
+
+    def test_different_names_no_conflict(self):
+        row = {
+            PHYLUM: 'Gastrotricha',
+            CLASS: 'Chaetonotida',
+        }
+
+        messages = self.validator._check_parent_name_conflict(row)
+
+        self.assertFalse(messages)
+
+
+class TestTaxaValidatorOnGbifWithoutLink(FastTenantTestCase):
+    """Tests for the 'On GBIF' marked without a GBIF link warning."""
+
+    def setUp(self):
+        self.upload_session = UploadSessionF.create()
+        self.validator = TaxaValidator(self.upload_session)
+
+    def test_on_gbif_yes_without_link_warns(self):
+        row = {ON_GBIF: 'Yes', GBIF_LINK: ''}
+
+        messages = self.validator._check_on_gbif_without_link(row, gbif_key=None)
+
+        self.assertTrue(any('taxon name' in m for m in messages))
+
+    def test_on_gbif_yes_with_link_no_warning(self):
+        row = {ON_GBIF: 'Yes', GBIF_LINK: 'https://www.gbif.org/species/12345'}
+
+        messages = self.validator._check_on_gbif_without_link(row, gbif_key='12345')
+
+        self.assertFalse(messages)
+
+    def test_on_gbif_no_without_link_no_warning(self):
+        row = {ON_GBIF: 'No', GBIF_LINK: ''}
+
+        messages = self.validator._check_on_gbif_without_link(row, gbif_key=None)
+
+        self.assertFalse(messages)
+
+
+class TestTaxaValidatorGbifLinkFormat(FastTenantTestCase):
+    """Tests for validating GBIF links point at a Catalogue of Life taxon."""
+
+    def setUp(self):
+        self.upload_session = UploadSessionF.create()
+        self.validator = TaxaValidator(self.upload_session)
+
+    def test_no_link_no_error(self):
+        row = {GBIF_LINK: ''}
+
+        messages = self.validator._check_gbif_link_format(row)
+
+        self.assertFalse(messages)
+
+    def test_valid_col_taxon_link_no_error(self):
+        row = {GBIF_LINK: 'https://www.gbif.org/taxon/ABC123'}
+
+        messages = self.validator._check_gbif_link_format(row)
+
+        self.assertFalse(messages)
+
+    def test_legacy_species_link_rejected(self):
+        row = {GBIF_LINK: 'https://www.gbif.org/species/99999'}
+
+        messages = self.validator._check_gbif_link_format(row)
+
+        self.assertTrue(any('99999' in m and 'not accepted' in m for m in messages))
+
+    def test_numeric_only_taxon_key_rejected(self):
+        """Even under /taxon/, a purely numeric key is suspicious -
+        Catalogue of Life taxon keys are not legacy numeric GBIF keys."""
+        row = {GBIF_LINK: 'https://www.gbif.org/taxon/99999'}
+
+        messages = self.validator._check_gbif_link_format(row)
+
+        self.assertTrue(any('legacy GBIF taxon key' in m for m in messages))
+
+    def test_unrecognized_gbif_link_format_rejected(self):
+        row = {GBIF_LINK: 'https://www.gbif.org/somethingelse/ABC123'}
+
+        messages = self.validator._check_gbif_link_format(row)
+
+        self.assertTrue(any('not recognized' in m for m in messages))
