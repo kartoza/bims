@@ -18,7 +18,8 @@ from collections import defaultdict
 
 from bims.scripts.species_keys import (
     GBIF_LINK, GBIF_URL, FADA_ID, TAXON, TAXON_RANK, GENUS, SPECIES,
-    TAXONOMIC_STATUS, ACCEPTED_TAXON, SYNONYM, AUTHORS, SUBGENUS
+    TAXONOMIC_STATUS, ACCEPTED_TAXON, SYNONYM, AUTHORS, SUBGENUS,
+    RANK_HIERARCHY, RANK_TITLE, SPECIES_GROUP, ON_GBIF
 )
 from bims.scripts.data_upload import FALLBACK_ENCODINGS
 from bims.models import Taxonomy, UploadSession
@@ -31,6 +32,10 @@ VALIDATION_OK = '_validation_ok'
 VALIDATION_WARNING = '_validation_warning'
 VALIDATION_ERROR = '_validation_error'
 NAME_SIMILARITY_THRESHOLD = 1
+
+# Column titles for each rank in the hierarchy, keyed by upper-case rank name.
+RANK_COLUMN_TITLES = dict(RANK_TITLE)
+RANK_COLUMN_TITLES['SPECIESGROUP'] = SPECIES_GROUP
 
 
 class TaxaValidator:
@@ -74,6 +79,48 @@ class TaxaValidator:
             last = str(gbif_link).rstrip('/').split('/')[-1]
             return last[:-2] if last.endswith('.0') else last
         return None
+
+    def _check_gbif_link_format(self, row):
+        """Validate that a provided GBIF link points at a Catalogue of Life
+        taxon (gbif.org/taxon/<col_id>), matching the same rule enforced at
+        import time in taxa_upload.py. The legacy gbif.org/species/<gbif_key>
+        form, and bare numeric keys (which indicate a legacy GBIF key was
+        pasted in by mistake), are rejected.
+
+        Returns a list of error messages.
+        """
+        messages = []
+
+        gbif_link = self.row_value(row, GBIF_LINK) or self.row_value(row, GBIF_URL)
+        if not gbif_link:
+            return messages
+
+        link_str = str(gbif_link).rstrip('/')
+        last = link_str.split('/')[-1]
+        last = last[:-2] if last.endswith('.0') else last
+
+        if '/species/' in link_str.lower():
+            messages.append(
+                f"ERROR: GBIF key '{last}' is not accepted; provide a Catalogue of "
+                f"Life link instead (e.g. gbif.org/taxon/{last})."
+            )
+            return messages
+
+        if 'gbif.org' in link_str.lower() and '/taxon/' not in link_str.lower():
+            messages.append(
+                f"ERROR: GBIF link '{gbif_link}' is not recognized; expected a "
+                f"Catalogue of Life link in the form gbif.org/taxon/<col_id>"
+            )
+            return messages
+
+        if last.isdigit():
+            messages.append(
+                f"ERROR: GBIF col_id '{last}' looks like a legacy GBIF taxon key "
+                f"(numeric only); expected a Catalogue of Life taxon key from "
+                f"gbif.org/taxon/<col_id>"
+            )
+
+        return messages
 
     def _check_database_duplicates(self, gbif_key, fada_id):
         """Check if record already exists in database. Returns list of warnings."""
@@ -198,6 +245,55 @@ class TaxaValidator:
         if not in_csv and not in_db:
             messages.append(
                 f"ERROR: Accepted taxon '{accepted_taxon_name}' is not in the system or the upload file"
+            )
+
+        return messages
+
+    def _check_parent_name_conflict(self, row):
+        """Check that no rank column in the classification chain (Kingdom,
+        Phylum, Class, ... Forma) shares a name with its nearest filled
+        ancestor column.
+
+        Returns a list of error messages.
+        """
+        messages = []
+        last_rank = None
+        last_name = None
+
+        for rank in RANK_HIERARCHY:
+            title = RANK_COLUMN_TITLES.get(rank, rank.capitalize())
+            value = self.row_value(row, title)
+            if not value:
+                continue
+
+            if last_rank and last_name and value.lower() == last_name.lower():
+                is_sub_to_nonsub = (
+                    rank.startswith('SUB') and rank[3:] == last_rank
+                )
+                if not is_sub_to_nonsub:
+                    messages.append(
+                        f"ERROR: Parent '{last_name}' ({last_rank}) "
+                        f"cannot have the same name as '{value}' ({rank})"
+                    )
+
+            last_rank = rank
+            last_name = value
+
+        return messages
+
+    def _check_on_gbif_without_link(self, row, gbif_key):
+        """Warn when 'On GBIF' is marked but no GBIF URL/col_id is given,
+        since the GBIF lookup will then fall back to matching by taxon name.
+
+        Returns a list of warning messages.
+        """
+        messages = []
+
+        on_gbif_value = self.row_value(row, ON_GBIF)
+        if on_gbif_value and 'yes' in on_gbif_value.lower() and not gbif_key:
+            messages.append(
+                "WARNING: 'On GBIF' is marked but no GBIF URL was provided; "
+                "the GBIF search will fall back to using the taxon name"
             )
 
         return messages
@@ -373,6 +469,20 @@ class TaxaValidator:
                         f"(also in row(s) {', '.join(map(str, other_rows))}). "
                         f"Verify that one is the accepted name and the other is a synonym."
                     )
+
+        # Check for conflicting names in the classification chain
+        # (e.g. Phylum and Class columns holding the same name)
+        parent_name_conflicts = self._check_parent_name_conflict(row)
+        messages.extend(parent_name_conflicts)
+
+        # Warn if marked 'On GBIF' but no GBIF URL/col_id is given
+        on_gbif_warnings = self._check_on_gbif_without_link(row, gbif_key)
+        messages.extend(on_gbif_warnings)
+
+        # Check that the GBIF link, if given, points at a COL taxon
+        # (gbif.org/taxon/<col_id>) rather than a legacy numeric GBIF key
+        gbif_link_format_errors = self._check_gbif_link_format(row)
+        messages.extend(gbif_link_format_errors)
 
         # Check database duplicates
         db_warnings = self._check_database_duplicates(gbif_key, fada_id)
