@@ -37,9 +37,10 @@ class TestWormsTaxaUpload(FastTenantTestCase):
                 module_group=self.taxon_group
             )
 
+    @mock.patch('bims.scripts.taxa_upload_worms._try_set_col_id', return_value=False)
     @mock.patch('bims.scripts.data_upload.DataCSVUpload.finish')
     @mock.patch('bims.scripts.taxa_upload_worms.preferences')
-    def test_worms_upload_validated(self, mock_preferences, mock_finish):
+    def test_worms_upload_validated(self, mock_preferences, mock_finish, mock_col_id):
         mock_finish.return_value = None
         mock_preferences.SiteSetting.auto_validate_taxa_on_upload = True
 
@@ -86,13 +87,12 @@ class TestWormsTaxaUpload(FastTenantTestCase):
         self.assertEqual(subfam.parent.canonical_name, 'Cypraeidae')
         self.assertEqual(subfam.parent.rank, 'FAMILY')
 
-        # Temporary name taxa are skipped entirely
-        self.assertFalse(
-            Taxonomy.objects.filter(
-                canonical_name='[unassigned] Decapodiformes',
-                rank='ORDER',
-            ).exists()
+        # Temporary name taxa are now imported with UNACCEPTED status
+        temp_name = Taxonomy.objects.get(
+            canonical_name='[unassigned] Decapodiformes',
+            rank='ORDER',
         )
+        self.assertEqual(temp_name.taxonomic_status, 'UNACCEPTED')
 
         # Accepted species has ACCEPTED status and no accepted_taxonomy link
         accepted = Taxonomy.objects.get(
@@ -121,13 +121,12 @@ class TestWormsTaxaUpload(FastTenantTestCase):
         extras = alt_rep.additional_data
         self.assertIn('AphiaID', extras)
 
-        # Temporary name taxa are skipped - [unassigned] Scolodontidae not imported
-        self.assertFalse(
-            Taxonomy.objects.filter(
-                canonical_name='[unassigned] Scolodontidae',
-                rank='SUBFAMILY',
-            ).exists()
+        # Temporary name taxa are now imported with UNACCEPTED status
+        scolodontidae = Taxonomy.objects.get(
+            canonical_name='[unassigned] Scolodontidae',
+            rank='SUBFAMILY',
         )
+        self.assertEqual(scolodontidae.taxonomic_status, 'UNACCEPTED')
         # Terrestrial tag is still attached to accepted/synonym terrestrial taxa
         terr = Taxonomy.objects.get(
             canonical_name='×Acostitrapa',
@@ -135,9 +134,10 @@ class TestWormsTaxaUpload(FastTenantTestCase):
         )
         self.assertTrue(terr.tags.filter(name='terrestrial').exists())
 
+    @mock.patch('bims.scripts.taxa_upload_worms._try_set_col_id', return_value=False)
     @mock.patch('bims.scripts.data_upload.DataCSVUpload.finish')
     @mock.patch('bims.scripts.taxa_upload_worms.preferences')
-    def test_worms_upload_unvalidated(self, mock_preferences, mock_finish):
+    def test_worms_upload_unvalidated(self, mock_preferences, mock_finish, mock_col_id):
         mock_finish.return_value = None
         mock_preferences.SiteSetting.auto_validate_taxa_on_upload = False
 
@@ -164,9 +164,10 @@ class TestWormsTaxaUpload(FastTenantTestCase):
             ).exists()
         )
 
+    @mock.patch('bims.scripts.taxa_upload_worms._try_set_col_id', return_value=False)
     @mock.patch('bims.scripts.data_upload.DataCSVUpload.finish')
     @mock.patch('bims.scripts.taxa_upload_worms.preferences')
-    def test_worms_parent_reuse(self, mock_preferences, mock_finish):
+    def test_worms_parent_reuse(self, mock_preferences, mock_finish, mock_col_id):
         mock_finish.return_value = None
         mock_preferences.SiteSetting.auto_validate_taxa_on_upload = True
 
@@ -328,6 +329,76 @@ class TestWormsTaxaUpload(FastTenantTestCase):
 
         t = Taxonomy.objects.get(canonical_name='Testus maximus', rank='SPECIES')
         self.assertEqual(t.aphia_id, 9999)
+
+    # ------------------------------------------------------------------
+    # fetch_col_id - GBIF/COL matching
+    # ------------------------------------------------------------------
+
+    @mock.patch('bims.utils.col.resolve_col_id')
+    @mock.patch('bims.scripts.taxa_upload_worms.preferences')
+    def test_fetch_col_id_stores_col_id(self, mock_preferences, mock_resolve_col_id):
+        mock_preferences.SiteSetting.auto_validate_taxa_on_upload = True
+        mock_resolve_col_id.return_value = ('COLID123', {})
+
+        class _P(WormsTaxaProcessor):
+            def handle_error(self, row, message): pass
+            def finish_processing_row(self, row, taxonomy): pass
+
+        row = {
+            "AphiaID": 9998,
+            "ScientificName": "Colidus testus",
+            "Authority": "",
+            "AphiaID_accepted": "",
+            "ScientificName_accepted": "",
+            "Authority_accepted": "",
+            "Kingdom": "Animalia", "Phylum": "Chordata", "Class": "Aves",
+            "Order": "Testiformes", "Family": "Testidae",
+            "Genus": "Colidus", "Subgenus": "",
+            "Species": "testus", "Subspecies": "",
+            "taxonRank": "species",
+            "taxonomicStatus": "accepted",
+            "Marine": 0, "Brackish": 0, "Fresh": 1, "Terrestrial": 0,
+            "Qualitystatus": "", "Unacceptreason": "",
+            "DateLastModified": "", "LSID": "", "Parent AphiaID": "",
+            "Storedpath": "", "Citation": "",
+        }
+        _P().process_worms_data(row, self.taxon_group, fetch_col_id=True)
+
+        t = Taxonomy.objects.get(canonical_name='Colidus testus', rank='SPECIES')
+        self.assertEqual(t.col_id, 'COLID123')
+
+    @mock.patch('bims.utils.col.resolve_col_id')
+    @mock.patch('bims.scripts.taxa_upload_worms.preferences')
+    def test_fetch_col_id_false_does_not_lookup(self, mock_preferences, mock_resolve_col_id):
+        mock_preferences.SiteSetting.auto_validate_taxa_on_upload = True
+
+        class _P(WormsTaxaProcessor):
+            def handle_error(self, row, message): pass
+            def finish_processing_row(self, row, taxonomy): pass
+
+        row = {
+            "AphiaID": 9997,
+            "ScientificName": "Nocolidus testus",
+            "Authority": "",
+            "AphiaID_accepted": "",
+            "ScientificName_accepted": "",
+            "Authority_accepted": "",
+            "Kingdom": "Animalia", "Phylum": "Chordata", "Class": "Aves",
+            "Order": "Testiformes", "Family": "Testidae",
+            "Genus": "Nocolidus", "Subgenus": "",
+            "Species": "testus", "Subspecies": "",
+            "taxonRank": "species",
+            "taxonomicStatus": "accepted",
+            "Marine": 0, "Brackish": 0, "Fresh": 1, "Terrestrial": 0,
+            "Qualitystatus": "", "Unacceptreason": "",
+            "DateLastModified": "", "LSID": "", "Parent AphiaID": "",
+            "Storedpath": "", "Citation": "",
+        }
+        _P().process_worms_data(row, self.taxon_group)
+
+        mock_resolve_col_id.assert_not_called()
+        t = Taxonomy.objects.get(canonical_name='Nocolidus testus', rank='SPECIES')
+        self.assertFalse(t.col_id)
 
     # ------------------------------------------------------------------
     # aquatic tag - freshwater taxa
@@ -610,11 +681,11 @@ class TestWormsTaxaUpload(FastTenantTestCase):
         self.assertIsNone(p._lineage_species_name(row))
 
     # ------------------------------------------------------------------
-    # UNACCEPTED → SYNONYM
+    # unaccepted → UNACCEPTED
     # ------------------------------------------------------------------
 
     @mock.patch('bims.scripts.taxa_upload_worms.preferences')
-    def test_unaccepted_status_maps_to_synonym(self, mock_preferences):
+    def test_unaccepted_status_maps_to_unaccepted(self, mock_preferences):
         mock_preferences.SiteSetting.auto_validate_taxa_on_upload = True
 
         class _P(WormsTaxaProcessor):
@@ -642,7 +713,7 @@ class TestWormsTaxaUpload(FastTenantTestCase):
         _P().process_worms_data(row, self.taxon_group)
 
         t = Taxonomy.objects.get(canonical_name='Oldname antiquus')
-        self.assertEqual(t.taxonomic_status, 'SYNONYM')
+        self.assertEqual(t.taxonomic_status, 'UNACCEPTED')
 
     # ------------------------------------------------------------------
     # Subspecies parent chain: Species intermediate created correctly

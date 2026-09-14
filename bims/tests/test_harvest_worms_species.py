@@ -58,7 +58,7 @@ _PATCH_DISCONNECT = 'bims.signals.utils.disconnect_bims_signals'
 _PATCH_CONNECT    = 'bims.signals.utils.connect_bims_signals'
 _PATCH_RECORD     = 'bims.utils.worms.get_aphia_record'
 _PATCH_CHILDREN   = 'bims.utils.worms.get_aphia_children'
-_PATCH_GBIF       = 'bims.scripts.taxa_upload_worms._try_set_gbif_key'
+_PATCH_COL_ID     = 'bims.scripts.taxa_upload_worms._try_set_col_id'
 _PATCH_PREFS      = 'bims.scripts.taxa_upload_worms.preferences'
 
 
@@ -92,7 +92,7 @@ class TestHarvestWormsSpeciesTask(FastTenantTestCase):
     # ------------------------------------------------------------------
 
     @mock.patch(_PATCH_PREFS)
-    @mock.patch(_PATCH_GBIF, return_value=False)
+    @mock.patch(_PATCH_COL_ID, return_value=False)
     @mock.patch(_PATCH_CHILDREN, return_value=[])
     @mock.patch(_PATCH_RECORD)
     @mock.patch(_PATCH_CONNECT)
@@ -115,7 +115,7 @@ class TestHarvestWormsSpeciesTask(FastTenantTestCase):
     # ------------------------------------------------------------------
 
     @mock.patch(_PATCH_PREFS)
-    @mock.patch(_PATCH_GBIF, return_value=False)
+    @mock.patch(_PATCH_COL_ID, return_value=False)
     @mock.patch(_PATCH_CHILDREN)
     @mock.patch(_PATCH_RECORD)
     @mock.patch(_PATCH_CONNECT)
@@ -169,7 +169,7 @@ class TestHarvestWormsSpeciesTask(FastTenantTestCase):
     # ------------------------------------------------------------------
 
     @mock.patch(_PATCH_PREFS)
-    @mock.patch(_PATCH_GBIF, return_value=False)
+    @mock.patch(_PATCH_COL_ID, return_value=False)
     @mock.patch(_PATCH_CHILDREN)
     @mock.patch(_PATCH_RECORD)
     @mock.patch(_PATCH_CONNECT)
@@ -209,7 +209,7 @@ class TestHarvestWormsSpeciesTask(FastTenantTestCase):
     # ------------------------------------------------------------------
 
     @mock.patch(_PATCH_PREFS)
-    @mock.patch(_PATCH_GBIF, return_value=False)
+    @mock.patch(_PATCH_COL_ID, return_value=False)
     @mock.patch(_PATCH_CHILDREN)
     @mock.patch(_PATCH_RECORD)
     @mock.patch(_PATCH_CONNECT)
@@ -242,7 +242,7 @@ class TestHarvestWormsSpeciesTask(FastTenantTestCase):
     # ------------------------------------------------------------------
 
     @mock.patch(_PATCH_PREFS)
-    @mock.patch(_PATCH_GBIF, return_value=False)
+    @mock.patch(_PATCH_COL_ID, return_value=False)
     @mock.patch(_PATCH_CHILDREN)
     @mock.patch(_PATCH_RECORD)
     @mock.patch(_PATCH_CONNECT)
@@ -284,7 +284,7 @@ class TestHarvestWormsSpeciesTask(FastTenantTestCase):
     # ------------------------------------------------------------------
 
     @mock.patch(_PATCH_PREFS)
-    @mock.patch(_PATCH_GBIF, return_value=False)
+    @mock.patch(_PATCH_COL_ID, return_value=False)
     @mock.patch(_PATCH_CHILDREN)
     @mock.patch(_PATCH_RECORD)
     @mock.patch(_PATCH_CONNECT)

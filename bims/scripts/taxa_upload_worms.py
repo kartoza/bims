@@ -18,25 +18,22 @@ from bims.utils.fetch_gbif import harvest_synonyms_for_accepted_taxonomy
 logger = logging.getLogger("bims")
 
 
-def _try_set_gbif_key(taxonomy) -> bool:
+def _try_set_col_id(taxonomy, rank: str | None = None) -> bool:
     """
-    Look up *taxonomy* in the GBIF backbone by canonical name and, if a
-    match is found, store the key and raw data on the taxon.
-    Returns True when a key was written.
+    Resolve *taxonomy* against the Catalogue of Life checklist by name
     """
-    from bims.utils.gbif import search_exact_match, get_species
+    from bims.utils.col import resolve_col_id
     try:
-        key = search_exact_match(taxonomy.canonical_name)
-        if key:
-            detail = get_species(key)
-            if detail:
-                taxonomy.gbif_key = key
-                taxonomy.gbif_data = detail
-                taxonomy.save(update_fields=["gbif_key", "gbif_data"])
-                return True
+        col_id, _ = resolve_col_id(
+            taxonomy.gbif_key, taxonomy.canonical_name, rank=rank
+        )
+        if col_id:
+            taxonomy.col_id = col_id
+            taxonomy.save(update_fields=["col_id"])
+            return True
     except Exception as exc:
         logger.debug(
-            "GBIF lookup failed for %s: %s",
+            "COL lookup failed for %s: %s",
             taxonomy.canonical_name, exc)
     return False
 
@@ -130,20 +127,41 @@ class WormsTaxaProcessor(TaxaProcessor):
 
     STATUS_MAP = {
         "accepted": "ACCEPTED",
-        "unaccepted": "SYNONYM",
-        "superseded combination": "SYNONYM",
-        "alternative representation": "SYNONYM",
+        "nomen novum": "ACCEPTED",
+        "nomen protectum": "ACCEPTED",
+        "unreplaced junior homonym": "ACCEPTED",
+
+        "junior homonym": "SYNONYM",
         "junior objective synonym": "SYNONYM",
         "junior subjective synonym": "SYNONYM",
         "senior objective synonym": "SYNONYM",
         "senior subjective synonym": "SYNONYM",
-        "unavailable name": "UNAVAILABLE NAME",
+        "misspelling - incorrect original spelling": "SYNONYM",
+        "misspelling - incorrect subsequent spelling": "SYNONYM",
+        "misspellings - incorrect original spelling": "SYNONYM",
+        "misspellings - incorrect subsequent spelling": "SYNONYM",
+        "nomen nudum": "SYNONYM",
+        "nomen oblitum": "SYNONYM",
+        "superseded combination": "SYNONYM",
+        "superseded rank": "SYNONYM",
+        "unjustified emendation": "SYNONYM",
+        "incorrect grammatical agreement of specific epithet": "SYNONYM",
+        "alternative representation": "SYNONYM",
+        "alternative representation: strongly to be avoided": "SYNONYM",
+        "misapplication": "SYNONYM",
+
+        "nomen dubium": "DOUBTFUL",
+        "taxon inquirendum": "DOUBTFUL",
+        "unassessed": "DOUBTFUL",
+
+        "unaccepted": "UNACCEPTED",
+        "unavailable name": "UNACCEPTED",
+        "interim unpublished": "UNACCEPTED",
+        "temporary name": "UNACCEPTED",
+        "nomen rejiciendum": "UNACCEPTED",
     }
 
-    SKIP_STATUSES = {
-        "misspelling - incorrect subsequent spelling",
-        "temporary name",
-    }
+    SKIP_STATUSES = set()
 
     HABITAT_TAGS = [
         ("Marine", "marine"),
@@ -327,19 +345,20 @@ class WormsTaxaProcessor(TaxaProcessor):
         taxonomy.additional_data = additional_data
 
     def process_worms_data(self, row: dict, taxon_group, harvest_synonyms: bool = False,
-                           fetch_gbif_key: bool = False):
+                           fetch_col_id: bool = False):
         """
         Process a single WoRMS row into Taxonomy.
 
         Parameters
         ----------
-        fetch_gbif_key : bool
-            When True, attempt a GBIF name-match lookup after saving the
-            taxon and store the result in gbif_key / gbif_data if the taxon
-            does not already have a GBIF key.
+        fetch_col_id : bool
+            When True, attempt a Catalogue of Life name-match lookup after
+            saving the taxon and store the result in col_id if the taxon
+            does not already have one.
         """
         status_raw = (row.get(WORMS_COLUMN_NAMES["status"]) or "").strip()
-        if status_raw.lower() in self.SKIP_STATUSES:
+        status_key = status_raw.lower().replace("–", "-").replace("—", "-")
+        if status_key in self.SKIP_STATUSES:
             logger.debug("Skipping AphiaID=%s: status %r", row.get(WORMS_COLUMN_NAMES["aphia_id"]), status_raw)
             return
 
@@ -348,7 +367,7 @@ class WormsTaxaProcessor(TaxaProcessor):
         if not rank:
             self.handle_error(row, f"Unsupported/empty taxonRank: {worms_rank}")
             return
-        taxonomic_status = self.STATUS_MAP.get(status_raw.lower(), status_raw.upper() or None)
+        taxonomic_status = self.STATUS_MAP.get(status_key, status_raw.upper() or None)
 
         is_accepted = status_raw.lower() == "accepted"
         accepted_name = (row.get(WORMS_COLUMN_NAMES["sci_name_acc"]) or "").strip()
@@ -407,14 +426,15 @@ class WormsTaxaProcessor(TaxaProcessor):
                 is_synonym = True
 
         if not is_accepted and accepted_name:
-            acc = Taxonomy.objects.filter(
-                canonical_name__iexact=accepted_name
-            ).first()
-
             accepted_parent = None
             acc_rank = rank
+            accepted_aphia_id_int = None
             accepted_aphia_id_val = row.get(WORMS_COLUMN_NAMES["aphia_id_acc"])
             if accepted_aphia_id_val:
+                try:
+                    accepted_aphia_id_int = int(accepted_aphia_id_val)
+                except (ValueError, TypeError):
+                    accepted_aphia_id_int = None
                 try:
                     accepted_row = self.fetch_accepted_row(int(accepted_aphia_id_val))
                     if accepted_row:
@@ -427,6 +447,8 @@ class WormsTaxaProcessor(TaxaProcessor):
                         accepted_aphia_id_val, exc,
                     )
 
+            acc = self._resolve_taxonomy(accepted_name, acc_rank, aphia_id=accepted_aphia_id_int)
+
             if not acc:
                 acc = Taxonomy.objects.create(
                     canonical_name=accepted_name,
@@ -437,6 +459,9 @@ class WormsTaxaProcessor(TaxaProcessor):
                 )
             else:
                 update_fields = []
+                if accepted_aphia_id_int and acc.aphia_id != accepted_aphia_id_int:
+                    acc.aphia_id = accepted_aphia_id_int
+                    update_fields.append("aphia_id")
                 if acc_rank and acc.rank != acc_rank:
                     acc.rank = acc_rank
                     update_fields.append("rank")
@@ -465,8 +490,8 @@ class WormsTaxaProcessor(TaxaProcessor):
 
         taxonomy.save()
 
-        if fetch_gbif_key and not taxonomy.gbif_key:
-            _try_set_gbif_key(taxonomy)
+        if fetch_col_id and not taxonomy.col_id:
+            _try_set_col_id(taxonomy, rank)
 
         auto_validate = preferences.SiteSetting.auto_validate_taxa_on_upload
         self.add_taxon_to_taxon_group(taxonomy, taxon_group, validated=auto_validate)
@@ -512,4 +537,4 @@ class WormsTaxaCSVUpload(DataCSVUpload, WormsTaxaProcessor):
         taxon_group = self.upload_session.module_group
         harvest_synonyms = self.upload_session.harvest_synonyms
         with transaction.atomic():
-            self.process_worms_data(row, taxon_group, harvest_synonyms)
+            self.process_worms_data(row, taxon_group, harvest_synonyms, fetch_col_id=True)
