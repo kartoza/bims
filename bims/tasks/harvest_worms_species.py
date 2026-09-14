@@ -60,10 +60,10 @@ class _SessionWormsTaxaProcessor:
         self._processor = _Processor()
 
     def process(self, row: dict, taxon_group, harvest_synonyms: bool,
-                fetch_gbif_key: bool = True):
+                fetch_col_id: bool = True):
         with transaction.atomic():
             self._processor.process_worms_data(
-                row, taxon_group, harvest_synonyms, fetch_gbif_key=fetch_gbif_key
+                row, taxon_group, harvest_synonyms, fetch_col_id=fetch_col_id
             )
 
 
@@ -164,7 +164,7 @@ def harvest_worms_species(session_id: int, schema_name: str):
                     processed_ids.add(aphia_id)
                 else:
                     try:
-                        processor.process(row, taxon_group, harvest_synonyms, fetch_gbif_key=True)
+                        processor.process(row, taxon_group, harvest_synonyms, fetch_col_id=True)
                         processed_ids.add(aphia_id)
                         total_processed += 1
                         _log(f"Processed root AphiaID={aphia_id} ({root.get('scientificname', '')})")
@@ -200,7 +200,7 @@ def harvest_worms_species(session_id: int, schema_name: str):
                         since_last_save += 1
                     else:
                         try:
-                            processor.process(row, taxon_group, harvest_synonyms, fetch_gbif_key=True)
+                            processor.process(row, taxon_group, harvest_synonyms, fetch_col_id=True)
                             processed_ids.add(child_id)
                             total_processed += 1
                             since_last_save += 1
