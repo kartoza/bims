@@ -86,13 +86,12 @@ class TestWormsTaxaUpload(FastTenantTestCase):
         self.assertEqual(subfam.parent.canonical_name, 'Cypraeidae')
         self.assertEqual(subfam.parent.rank, 'FAMILY')
 
-        # Temporary name taxa are skipped entirely
-        self.assertFalse(
-            Taxonomy.objects.filter(
-                canonical_name='[unassigned] Decapodiformes',
-                rank='ORDER',
-            ).exists()
+        # Temporary name taxa are now imported with UNACCEPTED status
+        temp_name = Taxonomy.objects.get(
+            canonical_name='[unassigned] Decapodiformes',
+            rank='ORDER',
         )
+        self.assertEqual(temp_name.taxonomic_status, 'UNACCEPTED')
 
         # Accepted species has ACCEPTED status and no accepted_taxonomy link
         accepted = Taxonomy.objects.get(
@@ -121,13 +120,12 @@ class TestWormsTaxaUpload(FastTenantTestCase):
         extras = alt_rep.additional_data
         self.assertIn('AphiaID', extras)
 
-        # Temporary name taxa are skipped - [unassigned] Scolodontidae not imported
-        self.assertFalse(
-            Taxonomy.objects.filter(
-                canonical_name='[unassigned] Scolodontidae',
-                rank='SUBFAMILY',
-            ).exists()
+        # Temporary name taxa are now imported with UNACCEPTED status
+        scolodontidae = Taxonomy.objects.get(
+            canonical_name='[unassigned] Scolodontidae',
+            rank='SUBFAMILY',
         )
+        self.assertEqual(scolodontidae.taxonomic_status, 'UNACCEPTED')
         # Terrestrial tag is still attached to accepted/synonym terrestrial taxa
         terr = Taxonomy.objects.get(
             canonical_name='×Acostitrapa',
@@ -610,11 +608,11 @@ class TestWormsTaxaUpload(FastTenantTestCase):
         self.assertIsNone(p._lineage_species_name(row))
 
     # ------------------------------------------------------------------
-    # UNACCEPTED → SYNONYM
+    # unaccepted → UNACCEPTED
     # ------------------------------------------------------------------
 
     @mock.patch('bims.scripts.taxa_upload_worms.preferences')
-    def test_unaccepted_status_maps_to_synonym(self, mock_preferences):
+    def test_unaccepted_status_maps_to_unaccepted(self, mock_preferences):
         mock_preferences.SiteSetting.auto_validate_taxa_on_upload = True
 
         class _P(WormsTaxaProcessor):
@@ -642,7 +640,7 @@ class TestWormsTaxaUpload(FastTenantTestCase):
         _P().process_worms_data(row, self.taxon_group)
 
         t = Taxonomy.objects.get(canonical_name='Oldname antiquus')
-        self.assertEqual(t.taxonomic_status, 'SYNONYM')
+        self.assertEqual(t.taxonomic_status, 'UNACCEPTED')
 
     # ------------------------------------------------------------------
     # Subspecies parent chain: Species intermediate created correctly

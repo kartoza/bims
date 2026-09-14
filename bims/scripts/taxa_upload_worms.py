@@ -130,20 +130,41 @@ class WormsTaxaProcessor(TaxaProcessor):
 
     STATUS_MAP = {
         "accepted": "ACCEPTED",
-        "unaccepted": "SYNONYM",
-        "superseded combination": "SYNONYM",
-        "alternative representation": "SYNONYM",
+        "nomen novum": "ACCEPTED",
+        "nomen protectum": "ACCEPTED",
+        "unreplaced junior homonym": "ACCEPTED",
+
+        "junior homonym": "SYNONYM",
         "junior objective synonym": "SYNONYM",
         "junior subjective synonym": "SYNONYM",
         "senior objective synonym": "SYNONYM",
         "senior subjective synonym": "SYNONYM",
-        "unavailable name": "UNAVAILABLE NAME",
+        "misspelling - incorrect original spelling": "SYNONYM",
+        "misspelling - incorrect subsequent spelling": "SYNONYM",
+        "misspellings - incorrect original spelling": "SYNONYM",
+        "misspellings - incorrect subsequent spelling": "SYNONYM",
+        "nomen nudum": "SYNONYM",
+        "nomen oblitum": "SYNONYM",
+        "superseded combination": "SYNONYM",
+        "superseded rank": "SYNONYM",
+        "unjustified emendation": "SYNONYM",
+        "incorrect grammatical agreement of specific epithet": "SYNONYM",
+        "alternative representation": "SYNONYM",
+        "alternative representation: strongly to be avoided": "SYNONYM",
+        "misapplication": "SYNONYM",
+
+        "nomen dubium": "DOUBTFUL",
+        "taxon inquirendum": "DOUBTFUL",
+        "unassessed": "DOUBTFUL",
+
+        "unaccepted": "UNACCEPTED",
+        "unavailable name": "UNACCEPTED",
+        "interim unpublished": "UNACCEPTED",
+        "temporary name": "UNACCEPTED",
+        "nomen rejiciendum": "UNACCEPTED",
     }
 
-    SKIP_STATUSES = {
-        "misspelling - incorrect subsequent spelling",
-        "temporary name",
-    }
+    SKIP_STATUSES = set()
 
     HABITAT_TAGS = [
         ("Marine", "marine"),
@@ -339,7 +360,8 @@ class WormsTaxaProcessor(TaxaProcessor):
             does not already have a GBIF key.
         """
         status_raw = (row.get(WORMS_COLUMN_NAMES["status"]) or "").strip()
-        if status_raw.lower() in self.SKIP_STATUSES:
+        status_key = status_raw.lower().replace("–", "-").replace("—", "-")
+        if status_key in self.SKIP_STATUSES:
             logger.debug("Skipping AphiaID=%s: status %r", row.get(WORMS_COLUMN_NAMES["aphia_id"]), status_raw)
             return
 
@@ -348,7 +370,7 @@ class WormsTaxaProcessor(TaxaProcessor):
         if not rank:
             self.handle_error(row, f"Unsupported/empty taxonRank: {worms_rank}")
             return
-        taxonomic_status = self.STATUS_MAP.get(status_raw.lower(), status_raw.upper() or None)
+        taxonomic_status = self.STATUS_MAP.get(status_key, status_raw.upper() or None)
 
         is_accepted = status_raw.lower() == "accepted"
         accepted_name = (row.get(WORMS_COLUMN_NAMES["sci_name_acc"]) or "").strip()
