@@ -1442,15 +1442,16 @@ class ClearGbifDatasetOccurrences(APIView):
 
         if dry_run:
             message = (
-                "Starting a DRY RUN check of all GBIF dataset keys currently in "
-                "use against GBIF. Nothing will be deleted; a report will be "
+                "Starting a DRY RUN check of all datasets in the database "
+                "against GBIF. Nothing will be deleted; a report will be "
                 "emailed to superusers."
             )
         else:
             message = (
-                "Starting background check of all GBIF dataset keys currently in "
-                "use. Occurrences belonging to datasets no longer on GBIF will be "
-                "removed. A report will be emailed to superusers."
+                "Starting background check of all datasets in the database. "
+                "Occurrences belonging to datasets no longer on GBIF will be "
+                "removed, along with the dataset records themselves. A report "
+                "will be emailed to superusers."
             )
 
         return Response({"message": message}, status=HTTP_200_OK)

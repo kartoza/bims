@@ -247,10 +247,10 @@ def clear_gbif_dataset_occurrences(
     timeout: int = 30,
 ) -> dict:
     """
-    Check every distinct GBIF dataset key currently used by local occurrences
-    against GBIF. For any dataset that no longer exists upstream (404 from
-    GBIF's dataset API), remove all local occurrences belonging to it (unless
-    dry_run).
+    Check every dataset in the local Dataset table against GBIF. For any
+    dataset that no longer exists upstream (404 from GBIF's dataset API, or a
+    non-null 'deleted' timestamp), remove all local GBIF-sourced occurrences
+    belonging to it and the local Dataset record itself (unless dry_run).
 
     :param dry_run: If True, do not delete anything; only report.
     :param timeout: Per-request timeout in seconds.
@@ -263,14 +263,7 @@ def clear_gbif_dataset_occurrences(
     session = _build_session()
     domain_name = get_domain_name()
 
-    base_qs = BiologicalCollectionRecord.objects.filter(
-        source_collection__icontains='gbif',
-        dataset_key__isnull=False,
-    ).exclude(dataset_key='')
-
-    dataset_keys = list(
-        base_qs.order_by().values_list('dataset_key', flat=True).distinct()
-    )
+    datasets = Dataset.objects.all().order_by('id')
 
     datasets_checked = 0
     deleted_dataset_keys = []
@@ -279,13 +272,17 @@ def clear_gbif_dataset_occurrences(
     datasets_removed = 0
     sample = []
 
-    for dataset_key in dataset_keys:
+    for dataset in datasets.iterator():
         datasets_checked += 1
+        dataset_key = str(dataset.uuid)
         if not _dataset_deleted(session, dataset_key, timeout):
             continue
 
         deleted_dataset_keys.append(dataset_key)
-        qs = base_qs.filter(dataset_key=dataset_key)
+        qs = BiologicalCollectionRecord.objects.filter(
+            source_collection__icontains='gbif',
+            dataset_key=dataset_key,
+        )
         count = qs.count()
         to_delete += count
 
@@ -305,11 +302,11 @@ def clear_gbif_dataset_occurrences(
 
             # Once every occurrence for this dataset is gone locally, remove
             # the local Dataset record too, so it doesn't linger orphaned.
-            local_dataset_qs = Dataset.objects.filter(uuid=dataset_key)
-            if local_dataset_qs.exists() and not BiologicalCollectionRecord.objects.filter(
+            if not BiologicalCollectionRecord.objects.filter(
                 dataset_key=dataset_key
             ).exists():
-                _, dataset_detail_map = local_dataset_qs.delete()
+                _, dataset_detail_map = Dataset.objects.filter(
+                    id=dataset.id).delete()
                 datasets_removed += dataset_detail_map.get('bims.Dataset', 0)
 
     result = {
