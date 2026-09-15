@@ -310,13 +310,11 @@ class WormsTaxaProcessor(TaxaProcessor):
 
         return parent
 
-    def _attach_habitat_tags(self, taxonomy: Taxonomy, row: dict, is_new: bool):
-        """Turn habitat flags into tags.
-
-        Only applied on the first harvest of a taxon. On re-harvest the tags
-        are left untouched so experts can edit them freely.
+    def _attach_habitat_tags(self, taxonomy: Taxonomy, row: dict, is_first_real_harvest: bool):
+        """Turn habitat flags into tags (Marine/Brackish/Fresh/Terrestrial ->
+        marine/brackish/freshwater/terrestrial).
         """
-        if not is_new:
+        if not is_first_real_harvest:
             return
         for col, tag_label in self.HABITAT_TAGS:
             val = row.get(col) if col in row else row.get(WORMS_COLUMN_NAMES[col.lower()])
@@ -324,12 +322,10 @@ class WormsTaxaProcessor(TaxaProcessor):
                 tag, _ = Tag.objects.get_or_create(name=tag_label)
                 taxonomy.tags.add(tag)
 
-    def _maybe_add_aquatic_tag(self, taxonomy: Taxonomy, row: dict, is_new: bool):
-        """Add 'aquatic' tag only on first harvest of a freshwater taxon.
-
-        On re-harvest the tag is left untouched so experts can edit it freely.
+    def _maybe_add_aquatic_tag(self, taxonomy: Taxonomy, row: dict, is_first_real_harvest: bool):
+        """Add 'aquatic' tag only on first real harvest of a freshwater taxon.
         """
-        if not is_new:
+        if not is_first_real_harvest:
             return
         fresh_val = row.get('Fresh') if 'Fresh' in row else row.get(WORMS_COLUMN_NAMES['fresh'])
         if self._boolish(fresh_val):
@@ -510,8 +506,10 @@ class WormsTaxaProcessor(TaxaProcessor):
 
             taxonomy.accepted_taxonomy = acc
 
-        self._attach_habitat_tags(taxonomy, row, is_new)
-        self._maybe_add_aquatic_tag(taxonomy, row, is_new)
+        is_first_real_harvest = is_new or not taxonomy.aphia_id
+
+        self._attach_habitat_tags(taxonomy, row, is_first_real_harvest)
+        self._maybe_add_aquatic_tag(taxonomy, row, is_first_real_harvest)
 
         if aphia_id_int is not None:
             taxonomy.aphia_id = aphia_id_int
