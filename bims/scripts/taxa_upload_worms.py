@@ -310,13 +310,11 @@ class WormsTaxaProcessor(TaxaProcessor):
 
         return parent
 
-    def _attach_habitat_tags(self, taxonomy: Taxonomy, row: dict, is_new: bool):
-        """Turn habitat flags into tags.
-
-        Only applied on the first harvest of a taxon. On re-harvest the tags
-        are left untouched so experts can edit them freely.
+    def _attach_habitat_tags(self, taxonomy: Taxonomy, row: dict, is_first_real_harvest: bool):
+        """Turn habitat flags into tags (Marine/Brackish/Fresh/Terrestrial ->
+        marine/brackish/freshwater/terrestrial).
         """
-        if not is_new:
+        if not is_first_real_harvest:
             return
         for col, tag_label in self.HABITAT_TAGS:
             val = row.get(col) if col in row else row.get(WORMS_COLUMN_NAMES[col.lower()])
@@ -324,12 +322,10 @@ class WormsTaxaProcessor(TaxaProcessor):
                 tag, _ = Tag.objects.get_or_create(name=tag_label)
                 taxonomy.tags.add(tag)
 
-    def _maybe_add_aquatic_tag(self, taxonomy: Taxonomy, row: dict, is_new: bool):
-        """Add 'aquatic' tag only on first harvest of a freshwater taxon.
-
-        On re-harvest the tag is left untouched so experts can edit it freely.
+    def _maybe_add_aquatic_tag(self, taxonomy: Taxonomy, row: dict, is_first_real_harvest: bool):
+        """Add 'aquatic' tag only on first real harvest of a freshwater taxon.
         """
-        if not is_new:
+        if not is_first_real_harvest:
             return
         fresh_val = row.get('Fresh') if 'Fresh' in row else row.get(WORMS_COLUMN_NAMES['fresh'])
         if self._boolish(fresh_val):
@@ -345,7 +341,7 @@ class WormsTaxaProcessor(TaxaProcessor):
         taxonomy.additional_data = additional_data
 
     def process_worms_data(self, row: dict, taxon_group, harvest_synonyms: bool = False,
-                           fetch_col_id: bool = False):
+                           fetch_col_id: bool = False, resolve_accepted: bool = True):
         """
         Process a single WoRMS row into Taxonomy.
 
@@ -355,6 +351,21 @@ class WormsTaxaProcessor(TaxaProcessor):
             When True, attempt a Catalogue of Life name-match lookup after
             saving the taxon and store the result in col_id if the taxon
             does not already have one.
+        resolve_accepted : bool
+            When True (default) and this row is a synonym, fetch the
+            accepted taxon's own WoRMS record and process it through this
+            same method so it is validated/tagged/added to the taxon group
+            like any other harvested taxon, rather than being fabricated
+            as a bare stub from the synonym row's "accepted" columns.
+            Set to False on the recursive call used to process that
+            accepted record, so we never chase a second level of
+            "accepted of the accepted" and risk infinite recursion.
+
+        Returns
+        -------
+        Taxonomy | None
+            The processed Taxonomy instance, or None if the row was
+            skipped (unsupported status/rank or invalid parent).
         """
         status_raw = (row.get(WORMS_COLUMN_NAMES["status"]) or "").strip()
         status_key = status_raw.lower().replace("–", "-").replace("—", "-")
@@ -425,10 +436,11 @@ class WormsTaxaProcessor(TaxaProcessor):
             if 'synonym' in taxonomic_status.lower():
                 is_synonym = True
 
-        if not is_accepted and accepted_name:
+        if resolve_accepted and not is_accepted and accepted_name:
             accepted_parent = None
             acc_rank = rank
             accepted_aphia_id_int = None
+            accepted_row = None
             accepted_aphia_id_val = row.get(WORMS_COLUMN_NAMES["aphia_id_acc"])
             if accepted_aphia_id_val:
                 try:
@@ -447,7 +459,20 @@ class WormsTaxaProcessor(TaxaProcessor):
                         accepted_aphia_id_val, exc,
                     )
 
-            acc = self._resolve_taxonomy(accepted_name, acc_rank, aphia_id=accepted_aphia_id_int)
+            acc = None
+            if accepted_row:
+                acc = self.process_worms_data(
+                    accepted_row,
+                    taxon_group,
+                    harvest_synonyms=False,
+                    fetch_col_id=fetch_col_id,
+                    resolve_accepted=False,
+                )
+
+            if not acc:
+                acc = self._resolve_taxonomy(
+                    accepted_name, acc_rank, aphia_id=accepted_aphia_id_int
+                )
 
             if not acc:
                 acc = Taxonomy.objects.create(
@@ -457,6 +482,9 @@ class WormsTaxaProcessor(TaxaProcessor):
                     rank=acc_rank,
                     parent=accepted_parent,
                 )
+                if accepted_aphia_id_int:
+                    acc.aphia_id = accepted_aphia_id_int
+                    acc.save(update_fields=["aphia_id"])
             else:
                 update_fields = []
                 if accepted_aphia_id_int and acc.aphia_id != accepted_aphia_id_int:
@@ -478,8 +506,10 @@ class WormsTaxaProcessor(TaxaProcessor):
 
             taxonomy.accepted_taxonomy = acc
 
-        self._attach_habitat_tags(taxonomy, row, is_new)
-        self._maybe_add_aquatic_tag(taxonomy, row, is_new)
+        is_first_real_harvest = is_new or not taxonomy.aphia_id
+
+        self._attach_habitat_tags(taxonomy, row, is_first_real_harvest)
+        self._maybe_add_aquatic_tag(taxonomy, row, is_first_real_harvest)
 
         if aphia_id_int is not None:
             taxonomy.aphia_id = aphia_id_int
@@ -513,6 +543,8 @@ class WormsTaxaProcessor(TaxaProcessor):
                 )
 
         self.finish_processing_row(row, taxonomy)
+
+        return taxonomy
 
 
 class WormsTaxaCSVUpload(DataCSVUpload, WormsTaxaProcessor):
