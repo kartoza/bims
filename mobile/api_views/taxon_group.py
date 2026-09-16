@@ -39,6 +39,10 @@ class TaxonGroupTotalValidated(APIView):
         self.accepted_unvalidated = 0
         self.synonym_validated = 0
         self.synonym_unvalidated = 0
+        self.doubtful_validated = 0
+        self.doubtful_unvalidated = 0
+        self.unaccepted_validated = 0
+        self.unaccepted_unvalidated = 0
 
     def _status_queries(self):
         accepted_names = {
@@ -59,8 +63,10 @@ class TaxonGroupTotalValidated(APIView):
             Q(taxonomic_status="")
         )
         synonym_q = Q(taxonomic_status__in=synonym_names)
+        doubtful_q = Q(taxonomic_status=TaxonomicStatus.DOUBTFUL.name)
+        unaccepted_q = Q(taxonomic_status='UNACCEPTED')
 
-        return accepted_q, synonym_q
+        return accepted_q, synonym_q, doubtful_q, unaccepted_q
 
     def collect_taxonomy_ids(self, taxon_group, can_view_unvalidated=False):
         """
@@ -69,7 +75,7 @@ class TaxonGroupTotalValidated(APIView):
         and passed down so child groups inherit the same permission.
         """
         from bims.templatetags.site import is_fada_site
-        accepted_q, synonym_q = self._status_queries()
+        accepted_q, synonym_q, doubtful_q, unaccepted_q = self._status_queries()
 
         qs = taxon_group.taxonomies.all()
         if is_fada_site():
@@ -90,6 +96,18 @@ class TaxonGroupTotalValidated(APIView):
             taxongrouptaxonomy__is_validated=True
         ).distinct().count()
 
+        self.doubtful_validated += qs.filter(
+            doubtful_q,
+            taxongrouptaxonomy__taxongroup=taxon_group,
+            taxongrouptaxonomy__is_validated=True
+        ).distinct().count()
+
+        self.unaccepted_validated += qs.filter(
+            unaccepted_q,
+            taxongrouptaxonomy__taxongroup=taxon_group,
+            taxongrouptaxonomy__is_validated=True
+        ).distinct().count()
+
         # Unvalidated (masked if no permission)
         if can_view_unvalidated:
             self.accepted_unvalidated += qs.filter(
@@ -100,6 +118,18 @@ class TaxonGroupTotalValidated(APIView):
 
             self.synonym_unvalidated += qs.filter(
                 synonym_q,
+                taxongrouptaxonomy__taxongroup=taxon_group,
+                taxongrouptaxonomy__is_validated=False
+            ).distinct().count()
+
+            self.doubtful_unvalidated += qs.filter(
+                doubtful_q,
+                taxongrouptaxonomy__taxongroup=taxon_group,
+                taxongrouptaxonomy__is_validated=False
+            ).distinct().count()
+
+            self.unaccepted_unvalidated += qs.filter(
+                unaccepted_q,
                 taxongrouptaxonomy__taxongroup=taxon_group,
                 taxongrouptaxonomy__is_validated=False
             ).distinct().count()
@@ -124,15 +154,29 @@ class TaxonGroupTotalValidated(APIView):
 
         accepted_unvalidated = self.accepted_unvalidated if can_view_unvalidated else 0
         synonym_unvalidated = self.synonym_unvalidated if can_view_unvalidated else 0
+        doubtful_unvalidated = self.doubtful_unvalidated if can_view_unvalidated else 0
+        unaccepted_unvalidated = self.unaccepted_unvalidated if can_view_unvalidated else 0
 
-        total_validated = self.accepted_validated + self.synonym_validated
-        total_unvalidated = accepted_unvalidated + synonym_unvalidated
+        total_validated = (
+            self.accepted_validated
+            + self.synonym_validated
+            + self.unaccepted_validated
+        )
+        total_unvalidated = (
+            accepted_unvalidated
+            + synonym_unvalidated
+            + unaccepted_unvalidated
+        )
 
         return Response({
             "accepted_validated": self.accepted_validated,
             "accepted_unvalidated": accepted_unvalidated,
             "synonym_validated": self.synonym_validated,
             "synonym_unvalidated": synonym_unvalidated,
+            "doubtful_validated": self.doubtful_validated,
+            "doubtful_unvalidated": doubtful_unvalidated,
+            "unaccepted_validated": self.unaccepted_validated,
+            "unaccepted_unvalidated": unaccepted_unvalidated,
 
             "total_validated": total_validated,
             "total_unvalidated": total_unvalidated,

@@ -185,10 +185,26 @@ export const taxaManagement = (() => {
                 success: function (response) {
                     $('#taxon_group_accepted_validated_' + taxaGroup.id).text(response.accepted_validated);
                     $('#taxon_group_synonym_validated_' + taxaGroup.id).text(response.synonym_validated);
+                    if (response.doubtful_validated > 0) {
+                        $('#taxon_group_doubtful_validated_wrap_' + taxaGroup.id).show();
+                        $('#taxon_group_doubtful_validated_' + taxaGroup.id).text(response.doubtful_validated);
+                    }
+                    if (response.unaccepted_validated > 0) {
+                        $('#taxon_group_unaccepted_validated_wrap_' + taxaGroup.id).show();
+                        $('#taxon_group_unaccepted_validated_' + taxaGroup.id).text(response.unaccepted_validated);
+                    }
                     if (response.total_unvalidated > 0) {
                         $('#taxon_group_unvalidated_' + taxaGroup.id).show();
                         $('#taxon_group_accepted_unvalidated_' + taxaGroup.id).text(response.accepted_unvalidated);
                         $('#taxon_group_synonym_unvalidated_' + taxaGroup.id).text(response.synonym_unvalidated);
+                        if (response.doubtful_unvalidated > 0) {
+                            $('#taxon_group_doubtful_unvalidated_wrap_' + taxaGroup.id).show();
+                            $('#taxon_group_doubtful_unvalidated_' + taxaGroup.id).text(response.doubtful_unvalidated);
+                        }
+                        if (response.unaccepted_unvalidated > 0) {
+                            $('#taxon_group_unaccepted_unvalidated_wrap_' + taxaGroup.id).show();
+                            $('#taxon_group_unaccepted_unvalidated_' + taxaGroup.id).text(response.unaccepted_unvalidated);
+                        }
                     }
                 }
             });
