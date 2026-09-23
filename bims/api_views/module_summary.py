@@ -121,6 +121,7 @@ class ModuleSummary(APIView):
 
         qs = Taxonomy.objects.filter(
             taxongrouptaxonomy__taxongroup__in=group_ids,
+            taxongrouptaxonomy__is_validated=True,
             taxonomic_status=TaxonomicStatus.ACCEPTED.name,
         ).distinct()
         if is_fada_site():
