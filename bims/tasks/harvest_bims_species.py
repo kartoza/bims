@@ -101,11 +101,26 @@ def _compute_taxon_checksum(taxon_data: dict) -> str:
         'accepted_taxonomy': taxon_data.get('accepted_taxonomy'),
         'iucn_status_name': (taxon_data.get('iucn_status_name') or '').strip().upper(),
         'iucn_redlist_id': taxon_data.get('iucn_redlist_id'),
+        'aphia_id': taxon_data.get('aphia_id'),
+        'col_id': (taxon_data.get('col_id') or '').strip(),
+        'fada_id': (taxon_data.get('fada_id') or '').strip(),
+        'taxonworks_id': taxon_data.get('taxonworks_id'),
+        'taxonworks_otu_id': taxon_data.get('taxonworks_otu_id'),
         'additional_data': taxon_data.get('additional_data') or {},
         'tag_list': (taxon_data.get('tag_list') or '').strip(),
     }
     raw = json.dumps(subset, sort_keys=True, separators=(',', ':'), default=str)
     return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def _fada_id_taken_by_other(fada_id: str, exclude_pk=None) -> bool:
+    """True if some other Taxonomy row already owns this fada_id (unique field)."""
+    from bims.models.taxonomy import Taxonomy
+
+    qs = Taxonomy.objects.filter(fada_id=fada_id)
+    if exclude_pk is not None:
+        qs = qs.exclude(pk=exclude_pk)
+    return qs.exists()
 
 
 def _resolve_remote_logo_url(base_url: str, remote_group_logo: str) -> str:
@@ -218,6 +233,26 @@ def _find_or_create_taxonomy(taxon_data: dict, base_url: str,
             gbif_key = int(gbif_key)
         except (TypeError, ValueError):
             gbif_key = None
+    aphia_id = taxon_data.get('aphia_id')
+    if aphia_id:
+        try:
+            aphia_id = int(aphia_id)
+        except (TypeError, ValueError):
+            aphia_id = None
+    col_id = (taxon_data.get('col_id') or '').strip() or None
+    fada_id = (taxon_data.get('fada_id') or '').strip() or None
+    taxonworks_id = taxon_data.get('taxonworks_id')
+    if taxonworks_id:
+        try:
+            taxonworks_id = int(taxonworks_id)
+        except (TypeError, ValueError):
+            taxonworks_id = None
+    taxonworks_otu_id = taxon_data.get('taxonworks_otu_id')
+    if taxonworks_otu_id:
+        try:
+            taxonworks_otu_id = int(taxonworks_otu_id)
+        except (TypeError, ValueError):
+            taxonworks_otu_id = None
 
     if not canonical_name:
         return None
@@ -391,6 +426,22 @@ def _find_or_create_taxonomy(taxon_data: dict, base_url: str,
         }
         if gbif_key:
             create_kwargs['gbif_key'] = gbif_key
+        if aphia_id:
+            create_kwargs['aphia_id'] = aphia_id
+        if col_id:
+            create_kwargs['col_id'] = col_id
+        if fada_id:
+            if _fada_id_taken_by_other(fada_id):
+                _emit(
+                    f"[CONFLICT] fada_id {fada_id!r} for {canonical_name!r} is "
+                    f"already used by another taxon — not assigning"
+                )
+            else:
+                create_kwargs['fada_id'] = fada_id
+        if taxonworks_id:
+            create_kwargs['taxonworks_id'] = taxonworks_id
+        if taxonworks_otu_id:
+            create_kwargs['taxonworks_otu_id'] = taxonworks_otu_id
         if parent_taxonomy:
             create_kwargs['parent'] = parent_taxonomy
         if accepted_taxonomy:
@@ -471,6 +522,33 @@ def _find_or_create_taxonomy(taxon_data: dict, base_url: str,
                 taxonomy.iucn_redlist_id = iucn_redlist_id
                 update_fields.append('iucn_redlist_id')
 
+            if aphia_id and taxonomy.aphia_id != aphia_id:
+                taxonomy.aphia_id = aphia_id
+                update_fields.append('aphia_id')
+
+            if col_id and taxonomy.col_id != col_id:
+                taxonomy.col_id = col_id
+                update_fields.append('col_id')
+
+            if fada_id and taxonomy.fada_id != fada_id:
+                if _fada_id_taken_by_other(fada_id, exclude_pk=taxonomy.pk):
+                    _emit(
+                        f"[CONFLICT] {taxonomy.canonical_name} (id={taxonomy.pk}): "
+                        f"fada_id {fada_id!r} is already used by another taxon "
+                        f"— not assigning"
+                    )
+                else:
+                    taxonomy.fada_id = fada_id
+                    update_fields.append('fada_id')
+
+            if taxonworks_id and taxonomy.taxonworks_id != taxonworks_id:
+                taxonomy.taxonworks_id = taxonworks_id
+                update_fields.append('taxonworks_id')
+
+            if taxonworks_otu_id and taxonomy.taxonworks_otu_id != taxonworks_otu_id:
+                taxonomy.taxonworks_otu_id = taxonworks_otu_id
+                update_fields.append('taxonworks_otu_id')
+
         else:
             if parent_taxonomy and not taxonomy.parent:
                 taxonomy.parent = parent_taxonomy
@@ -487,6 +565,33 @@ def _find_or_create_taxonomy(taxon_data: dict, base_url: str,
             if iucn_redlist_id and not taxonomy.iucn_redlist_id:
                 taxonomy.iucn_redlist_id = iucn_redlist_id
                 update_fields.append('iucn_redlist_id')
+
+            if aphia_id and not taxonomy.aphia_id:
+                taxonomy.aphia_id = aphia_id
+                update_fields.append('aphia_id')
+
+            if col_id and not taxonomy.col_id:
+                taxonomy.col_id = col_id
+                update_fields.append('col_id')
+
+            if fada_id and not taxonomy.fada_id:
+                if _fada_id_taken_by_other(fada_id, exclude_pk=taxonomy.pk):
+                    _emit(
+                        f"[CONFLICT] {taxonomy.canonical_name} (id={taxonomy.pk}): "
+                        f"fada_id {fada_id!r} is already used by another taxon "
+                        f"— not assigning"
+                    )
+                else:
+                    taxonomy.fada_id = fada_id
+                    update_fields.append('fada_id')
+
+            if taxonworks_id and not taxonomy.taxonworks_id:
+                taxonomy.taxonworks_id = taxonworks_id
+                update_fields.append('taxonworks_id')
+
+            if taxonworks_otu_id and not taxonomy.taxonworks_otu_id:
+                taxonomy.taxonworks_otu_id = taxonworks_otu_id
+                update_fields.append('taxonworks_otu_id')
 
         if update_fields:
             taxonomy.save(update_fields=update_fields)

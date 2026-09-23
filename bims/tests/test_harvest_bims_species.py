@@ -61,6 +61,8 @@ def _taxon(
     gbif_key=None, parent=None, scientific_name=None,
     author='', taxonomic_status='ACCEPTED',
     tag_list='', additional_data=None, accepted_taxonomy=None,
+    aphia_id=None, col_id=None, fada_id=None,
+    taxonworks_id=None, taxonworks_otu_id=None,
 ):
     return {
         'id': taxon_id,
@@ -74,6 +76,11 @@ def _taxon(
         'taxonomic_status': taxonomic_status,
         'tag_list': tag_list,
         'additional_data': additional_data or {},
+        'aphia_id': aphia_id,
+        'col_id': col_id,
+        'fada_id': fada_id,
+        'taxonworks_id': taxonworks_id,
+        'taxonworks_otu_id': taxonworks_otu_id,
     }
 
 
@@ -209,6 +216,39 @@ class TestFindOrCreateTaxonomy(FastTenantTestCase):
         self.assertEqual(result.canonical_name, 'Newgenus newspecies')
         self.assertEqual(result.rank, 'SPECIES')
         self.assertEqual(result.gbif_key, 12345)
+
+    def test_creates_new_with_aphia_id_and_col_id(self):
+        data = _taxon(
+            998, 'Newgenus wormsii', rank='SPECIES',
+            aphia_id=131160, col_id='ABCD1234',
+        )
+        result = _find_or_create_taxonomy(data, 'http://bims.test', self.remote_cache)
+        self.assertEqual(result.aphia_id, 131160)
+        self.assertEqual(result.col_id, 'ABCD1234')
+
+    def test_creates_new_with_fada_id(self):
+        data = _taxon(997, 'Newgenus fadaensis', rank='SPECIES', fada_id='FADA-1')
+        result = _find_or_create_taxonomy(data, 'http://bims.test', self.remote_cache)
+        self.assertEqual(result.fada_id, 'FADA-1')
+
+    def test_create_skips_fada_id_already_taken_by_other_taxon(self):
+        Taxonomy.objects.create(
+            canonical_name='Owner species', scientific_name='Owner species',
+            rank='SPECIES', fada_id='FADA-DUP',
+        )
+        data = _taxon(996, 'Newgenus duplicatus', rank='SPECIES', fada_id='FADA-DUP')
+        result = _find_or_create_taxonomy(data, 'http://bims.test', self.remote_cache)
+        self.assertIsNotNone(result)
+        self.assertIsNone(result.fada_id)
+
+    def test_creates_new_with_taxonworks_ids(self):
+        data = _taxon(
+            995, 'Newgenus taxonworksii', rank='SPECIES',
+            taxonworks_id=42, taxonworks_otu_id=99,
+        )
+        result = _find_or_create_taxonomy(data, 'http://bims.test', self.remote_cache)
+        self.assertEqual(result.taxonworks_id, 42)
+        self.assertEqual(result.taxonworks_otu_id, 99)
 
     def test_returns_none_for_empty_canonical_name(self):
         data = _taxon(1, '', rank='SPECIES')
@@ -1017,6 +1057,153 @@ class TestConflictResolutionPolicy(FastTenantTestCase):
         self._run(data, is_readonly=True)
         self.assertTrue(any('DIVERGENCE' in line and 'parent' in line
                             for line in self.log_lines))
+
+    # -- aphia_id / col_id: filled when missing (non-readonly) --------------
+
+    def test_non_readonly_aphia_id_and_col_id_filled_when_missing(self):
+        existing = Taxonomy.objects.create(
+            canonical_name='Worms filled sp', scientific_name='Worms filled sp',
+            rank='SPECIES', gbif_key=94001,
+        )
+        data = _taxon(18, 'Worms filled sp', rank='SPECIES',
+                      gbif_key=94001, aphia_id=131160, col_id='ABCD1234')
+        self._run(data, is_readonly=False)
+        existing.refresh_from_db()
+        self.assertEqual(existing.aphia_id, 131160)
+        self.assertEqual(existing.col_id, 'ABCD1234')
+
+    def test_non_readonly_existing_aphia_id_and_col_id_not_replaced(self):
+        existing = Taxonomy.objects.create(
+            canonical_name='Worms stable sp', scientific_name='Worms stable sp',
+            rank='SPECIES', gbif_key=94002, aphia_id=1, col_id='OLDID',
+        )
+        data = _taxon(19, 'Worms stable sp', rank='SPECIES',
+                      gbif_key=94002, aphia_id=131160, col_id='ABCD1234')
+        self._run(data, is_readonly=False)
+        existing.refresh_from_db()
+        self.assertEqual(existing.aphia_id, 1)
+        self.assertEqual(existing.col_id, 'OLDID')
+
+    # -- aphia_id / col_id: always synced to upstream (readonly) ------------
+
+    def test_readonly_aphia_id_and_col_id_updated_to_match_upstream(self):
+        existing = Taxonomy.objects.create(
+            canonical_name='Worms sync sp', scientific_name='Worms sync sp',
+            rank='SPECIES', gbif_key=94003, aphia_id=1, col_id='OLDID',
+        )
+        data = _taxon(20, 'Worms sync sp', rank='SPECIES',
+                      gbif_key=94003, aphia_id=131160, col_id='ABCD1234')
+        self._run(data, is_readonly=True)
+        existing.refresh_from_db()
+        self.assertEqual(existing.aphia_id, 131160)
+        self.assertEqual(existing.col_id, 'ABCD1234')
+
+    # -- fada_id: filled when missing (non-readonly) -------------------------
+
+    def test_non_readonly_fada_id_filled_when_missing(self):
+        existing = Taxonomy.objects.create(
+            canonical_name='Fada filled sp', scientific_name='Fada filled sp',
+            rank='SPECIES', gbif_key=94004,
+        )
+        data = _taxon(21, 'Fada filled sp', rank='SPECIES',
+                      gbif_key=94004, fada_id='FADA-2')
+        self._run(data, is_readonly=False)
+        existing.refresh_from_db()
+        self.assertEqual(existing.fada_id, 'FADA-2')
+
+    def test_non_readonly_existing_fada_id_not_replaced(self):
+        existing = Taxonomy.objects.create(
+            canonical_name='Fada stable sp', scientific_name='Fada stable sp',
+            rank='SPECIES', gbif_key=94005, fada_id='FADA-OLD',
+        )
+        data = _taxon(22, 'Fada stable sp', rank='SPECIES',
+                      gbif_key=94005, fada_id='FADA-NEW')
+        self._run(data, is_readonly=False)
+        existing.refresh_from_db()
+        self.assertEqual(existing.fada_id, 'FADA-OLD')
+
+    def test_non_readonly_fada_id_conflict_not_assigned(self):
+        Taxonomy.objects.create(
+            canonical_name='Fada owner sp', scientific_name='Fada owner sp',
+            rank='SPECIES', fada_id='FADA-TAKEN',
+        )
+        existing = Taxonomy.objects.create(
+            canonical_name='Fada wants sp', scientific_name='Fada wants sp',
+            rank='SPECIES', gbif_key=94006,
+        )
+        data = _taxon(23, 'Fada wants sp', rank='SPECIES',
+                      gbif_key=94006, fada_id='FADA-TAKEN')
+        self._run(data, is_readonly=False)
+        existing.refresh_from_db()
+        self.assertIsNone(existing.fada_id)
+
+    # -- fada_id: always synced to upstream (readonly) -----------------------
+
+    def test_readonly_fada_id_updated_to_match_upstream(self):
+        existing = Taxonomy.objects.create(
+            canonical_name='Fada sync sp', scientific_name='Fada sync sp',
+            rank='SPECIES', gbif_key=94007, fada_id='FADA-OLD2',
+        )
+        data = _taxon(24, 'Fada sync sp', rank='SPECIES',
+                      gbif_key=94007, fada_id='FADA-NEW2')
+        self._run(data, is_readonly=True)
+        existing.refresh_from_db()
+        self.assertEqual(existing.fada_id, 'FADA-NEW2')
+
+    def test_readonly_fada_id_conflict_not_assigned(self):
+        Taxonomy.objects.create(
+            canonical_name='Fada owner ro sp', scientific_name='Fada owner ro sp',
+            rank='SPECIES', fada_id='FADA-TAKEN-RO',
+        )
+        existing = Taxonomy.objects.create(
+            canonical_name='Fada wants ro sp', scientific_name='Fada wants ro sp',
+            rank='SPECIES', gbif_key=94008,
+        )
+        data = _taxon(25, 'Fada wants ro sp', rank='SPECIES',
+                      gbif_key=94008, fada_id='FADA-TAKEN-RO')
+        self._run(data, is_readonly=True)
+        existing.refresh_from_db()
+        self.assertIsNone(existing.fada_id)
+
+    # -- taxonworks_id / taxonworks_otu_id: filled when missing (non-readonly)
+
+    def test_non_readonly_taxonworks_ids_filled_when_missing(self):
+        existing = Taxonomy.objects.create(
+            canonical_name='TW filled sp', scientific_name='TW filled sp',
+            rank='SPECIES', gbif_key=94009,
+        )
+        data = _taxon(26, 'TW filled sp', rank='SPECIES',
+                      gbif_key=94009, taxonworks_id=42, taxonworks_otu_id=99)
+        self._run(data, is_readonly=False)
+        existing.refresh_from_db()
+        self.assertEqual(existing.taxonworks_id, 42)
+        self.assertEqual(existing.taxonworks_otu_id, 99)
+
+    def test_non_readonly_existing_taxonworks_ids_not_replaced(self):
+        existing = Taxonomy.objects.create(
+            canonical_name='TW stable sp', scientific_name='TW stable sp',
+            rank='SPECIES', gbif_key=94010, taxonworks_id=1, taxonworks_otu_id=2,
+        )
+        data = _taxon(27, 'TW stable sp', rank='SPECIES',
+                      gbif_key=94010, taxonworks_id=42, taxonworks_otu_id=99)
+        self._run(data, is_readonly=False)
+        existing.refresh_from_db()
+        self.assertEqual(existing.taxonworks_id, 1)
+        self.assertEqual(existing.taxonworks_otu_id, 2)
+
+    # -- taxonworks_id / taxonworks_otu_id: always synced (readonly) --------
+
+    def test_readonly_taxonworks_ids_updated_to_match_upstream(self):
+        existing = Taxonomy.objects.create(
+            canonical_name='TW sync sp', scientific_name='TW sync sp',
+            rank='SPECIES', gbif_key=94011, taxonworks_id=1, taxonworks_otu_id=2,
+        )
+        data = _taxon(28, 'TW sync sp', rank='SPECIES',
+                      gbif_key=94011, taxonworks_id=42, taxonworks_otu_id=99)
+        self._run(data, is_readonly=True)
+        existing.refresh_from_db()
+        self.assertEqual(existing.taxonworks_id, 42)
+        self.assertEqual(existing.taxonworks_otu_id, 99)
 
     # -- tags: always additive regardless of group type ---------------------
 
