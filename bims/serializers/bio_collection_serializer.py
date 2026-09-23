@@ -1218,10 +1218,10 @@ class BioCollectionOneRowSerializer(
 
         # For gbif
         if instance.source_collection == 'gbif':
-            key = 'GBIF key'
+            key = 'CoL ID'
             if key not in self.context['header']:
                 self.context['header'].append(key)
-            result[key] = instance.taxonomy.gbif_key
+            result[key] = instance.taxonomy.col_id
 
         # For VM
         if instance.source_collection == 'virtual_museum':

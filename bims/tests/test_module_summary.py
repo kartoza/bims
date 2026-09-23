@@ -57,12 +57,16 @@ class TestModuleSummaryChildGroupsRollup(FastTenantTestCase):
         # Parent group with 1 accepted species of its own
         self.parent = _species_group('Fish')
         self.parent_taxon = _accepted(scientific_name='ParentFish')
-        TaxonGroupTaxonomyF.create(taxongroup=self.parent, taxonomy=self.parent_taxon)
+        TaxonGroupTaxonomyF.create(
+            taxongroup=self.parent, taxonomy=self.parent_taxon, is_validated=True
+        )
 
         # Child group with 1 unique accepted species
         self.child = _species_group('Child Fish', parent=self.parent)
         self.child_taxon = _accepted(scientific_name='ChildFish')
-        TaxonGroupTaxonomyF.create(taxongroup=self.child, taxonomy=self.child_taxon)
+        TaxonGroupTaxonomyF.create(
+            taxongroup=self.child, taxonomy=self.child_taxon, is_validated=True
+        )
 
     def test_summary_data_excludes_child_groups(self):
         data = self.ms.summary_data()
@@ -78,7 +82,7 @@ class TestModuleSummaryChildGroupsRollup(FastTenantTestCase):
         """A taxon linked to both parent and child is counted only once."""
         # Link child_taxon also directly to parent
         TaxonGroupTaxonomyF.create(
-            taxongroup=self.parent, taxonomy=self.child_taxon
+            taxongroup=self.parent, taxonomy=self.child_taxon, is_validated=True
         )
         count = self.ms._validated_count_for_group(self.parent)
         # parent_taxon + child_taxon = 2 distinct, even though child_taxon
@@ -119,8 +123,12 @@ class TestModuleSummaryNonFadaSite(FastTenantTestCase):
 
         self.taxon_with_fada = _accepted(scientific_name='BirdA', fada_id='F001')
         self.taxon_no_fada = _accepted(scientific_name='BirdB', fada_id='')
-        TaxonGroupTaxonomyF.create(taxongroup=self.group, taxonomy=self.taxon_with_fada)
-        TaxonGroupTaxonomyF.create(taxongroup=self.group, taxonomy=self.taxon_no_fada)
+        TaxonGroupTaxonomyF.create(
+            taxongroup=self.group, taxonomy=self.taxon_with_fada, is_validated=True
+        )
+        TaxonGroupTaxonomyF.create(
+            taxongroup=self.group, taxonomy=self.taxon_no_fada, is_validated=True
+        )
 
     @patch('bims.api_views.module_summary.is_fada_site', return_value=False)
     def test_all_accepted_counted_on_non_fada(self, _mock):
@@ -144,7 +152,9 @@ class TestModuleSummaryFadaSite(FastTenantTestCase):
         self.taxon_null_fada = _accepted(scientific_name='InsectB', fada_id=None)
         self.taxon_empty_fada = _accepted(scientific_name='InsectC', fada_id='')
         for t in (self.taxon_with_fada, self.taxon_null_fada, self.taxon_empty_fada):
-            TaxonGroupTaxonomyF.create(taxongroup=self.group, taxonomy=t)
+            TaxonGroupTaxonomyF.create(
+                taxongroup=self.group, taxonomy=t, is_validated=True
+            )
 
     @patch('bims.api_views.module_summary.is_fada_site', return_value=True)
     def test_only_fada_taxa_counted(self, _mock):
@@ -166,14 +176,20 @@ class TestModuleSummaryFadaChildRollup(FastTenantTestCase):
 
         # parent-level taxon: has fada_id
         self.p_taxon = _accepted(scientific_name='ParentReptile', fada_id='R001')
-        TaxonGroupTaxonomyF.create(taxongroup=self.parent, taxonomy=self.p_taxon)
+        TaxonGroupTaxonomyF.create(
+            taxongroup=self.parent, taxonomy=self.p_taxon, is_validated=True
+        )
 
         # child group: one fada, one not
         self.child = _species_group('Sub-reptiles', parent=self.parent)
         self.c_fada = _accepted(scientific_name='ChildReptileA', fada_id='R002')
         self.c_no_fada = _accepted(scientific_name='ChildReptileB', fada_id='')
-        TaxonGroupTaxonomyF.create(taxongroup=self.child, taxonomy=self.c_fada)
-        TaxonGroupTaxonomyF.create(taxongroup=self.child, taxonomy=self.c_no_fada)
+        TaxonGroupTaxonomyF.create(
+            taxongroup=self.child, taxonomy=self.c_fada, is_validated=True
+        )
+        TaxonGroupTaxonomyF.create(
+            taxongroup=self.child, taxonomy=self.c_no_fada, is_validated=True
+        )
 
     @patch('bims.api_views.module_summary.is_fada_site', return_value=True)
     def test_child_not_in_summary(self, _mock):
@@ -206,8 +222,12 @@ class TestModuleSummaryNonAcceptedExcluded(FastTenantTestCase):
             taxonomic_status=TaxonomicStatus.SYNONYM.name,
             rank=TaxonomicRank.SPECIES.name,
         )
-        TaxonGroupTaxonomyF.create(taxongroup=self.group, taxonomy=self.accepted)
-        TaxonGroupTaxonomyF.create(taxongroup=self.group, taxonomy=self.synonym)
+        TaxonGroupTaxonomyF.create(
+            taxongroup=self.group, taxonomy=self.accepted, is_validated=True
+        )
+        TaxonGroupTaxonomyF.create(
+            taxongroup=self.group, taxonomy=self.synonym, is_validated=True
+        )
 
     @patch('bims.api_views.module_summary.is_fada_site', return_value=False)
     def test_only_accepted_counted(self, _mock):
