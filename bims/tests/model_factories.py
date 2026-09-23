@@ -265,8 +265,6 @@ class TaxonGroupTaxonomyF(factory.django.DjangoModelFactory):
     class Meta:
         model = TaxonGroupTaxonomy
 
-    is_validated = True
-
 
 class TaxonGroupF(factory.django.DjangoModelFactory):
     """
