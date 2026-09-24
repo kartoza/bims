@@ -224,9 +224,26 @@
                     <div class="table-container">
                         <div class="table-title">
                             Metadata Table
-                            <i data-download-title=" Metadata Table"
-                               data-toggle="tooltip" data-placement="left"
-                               class="fa fa-download pull-right download-icon download-table"></i>
+                            <div class="btn-group pull-right">
+                                <i data-placement="left" data-toggle="dropdown" aria-haspopup="true"
+                                   aria-expanded="false" title="Download metadata"
+                                   class="fa fa-download pull-right download-icon"></i>
+                                <div class="dropdown-menu dropdown-menu-right">
+                                    <a class="btn dropdown-item download-table" data-download-title=" Metadata Table">
+                                        Download Metadata Table
+                                    </a>
+                                    <div class="dropdown-divider"></div>
+                                    <a class="btn dropdown-item download-citation" data-format="plain" href="#">
+                                        Download Citations (Plain text)
+                                    </a>
+                                    <a class="btn dropdown-item download-citation" data-format="bibtex" href="#">
+                                        Download Citations (BibTeX)
+                                    </a>
+                                    <a class="btn dropdown-item download-citation" data-format="ris" href="#">
+                                        Download Citations (RIS)
+                                    </a>
+                                </div>
+                            </div>
                         </div>
                         <div class="data-content">
                             <table id="data-source-list"

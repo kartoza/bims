@@ -1,6 +1,77 @@
+var metadataSourceReferences = [];
+
+function setMetadataSourceReferences(dataSources) {
+    metadataSourceReferences = dataSources || [];
+}
+
+function downloadCitationList(e) {
+    e.preventDefault();
+    let format = $(e.currentTarget).data('format');
+    let alertModalBody = $('#alertModalBody');
+
+    if (!is_logged_in) {
+        alertModalBody.html('Please log in first.');
+        $('#alertModal').modal({'keyboard': false, 'backdrop': 'static'});
+        return;
+    }
+
+    let sourceReferenceIds = metadataSourceReferences
+        .filter(function (s) { return s['ID'] && s['Reference Category'] !== 'Occurrence dataset'; })
+        .map(function (s) { return s['ID']; });
+    let datasetIds = metadataSourceReferences
+        .filter(function (s) { return s['ID'] && s['Reference Category'] === 'Occurrence dataset'; })
+        .map(function (s) { return s['ID']; });
+
+    if (sourceReferenceIds.length === 0 && datasetIds.length === 0) {
+        alertModalBody.html('No source references available to download.');
+        $('#alertModal').modal({'keyboard': false, 'backdrop': 'static'});
+        return;
+    }
+
+    showDownloadPopup('CSV', 'Citation List', function (downloadRequestId) {
+        let formData = new FormData();
+        formData.append('citation_format', format);
+        formData.append('download_request_id', downloadRequestId);
+        $.each(sourceReferenceIds, function (i, id) {
+            formData.append('source_reference_ids', id);
+        });
+        $.each(datasetIds, function (i, id) {
+            formData.append('dataset_ids', id);
+        });
+
+        $.ajax({
+            url: '/api/download-citations/',
+            type: 'POST',
+            headers: {'X-CSRFToken': csrfmiddlewaretoken},
+            data: formData,
+            processData: false,
+            contentType: false,
+            success: function () {
+                alertModalBody.html(
+                    'Your citation list is being generated and will be emailed to you shortly.'
+                );
+                $('#alertModal').modal({'keyboard': false, 'backdrop': 'static'});
+            },
+            error: function (xhr) {
+                let msg = 'Failed to generate citation list. Please try again.';
+                if (xhr.responseJSON && xhr.responseJSON.error) {
+                    msg = xhr.responseJSON.error;
+                }
+                alertModalBody.html(msg);
+                $('#alertModal').modal({'keyboard': false, 'backdrop': 'static'});
+            }
+        });
+    }, true, null, false);
+}
+
+$(function () {
+    $(document).on('click', '.download-citation', downloadCitationList);
+});
+
 function renderSourceReferences() {
     let divWrapper = $('#data-source-list');
     let dataSources = sourceReferences;
+    setMetadataSourceReferences(dataSources);
     let order = ['Reference Category', 'Author/s', 'Year', 'Title', 'Source', 'DOI/URL', 'Notes'];
     let orderedDataSources = [];
     for (var j=0; j<dataSources.length; j++) {
