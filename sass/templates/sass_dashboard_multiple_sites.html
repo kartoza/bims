@@ -227,6 +227,26 @@
                 <div class="table-container ajax-container">
                     <div class="table-title">
                         Metadata Table
+                        <div class="btn-group pull-right">
+                            <i data-placement="left" data-toggle="dropdown" aria-haspopup="true"
+                               aria-expanded="false" title="Download metadata"
+                               class="fa fa-download pull-right download-icon"></i>
+                            <div class="dropdown-menu dropdown-menu-right">
+                                <a class="btn dropdown-item download-table" data-download-title=" Metadata Table">
+                                    Download Metadata Table
+                                </a>
+                                <div class="dropdown-divider"></div>
+                                <a class="btn dropdown-item download-citation" data-format="plain" href="#">
+                                    Download Citations (Plain text)
+                                </a>
+                                <a class="btn dropdown-item download-citation" data-format="bibtex" href="#">
+                                    Download Citations (BibTeX)
+                                </a>
+                                <a class="btn dropdown-item download-citation" data-format="ris" href="#">
+                                    Download Citations (RIS)
+                                </a>
+                            </div>
+                        </div>
                     </div>
                     <div class="data-content">
                         <table id="data-source-list" class="table table-hover custom-table metadata-table"></table>
@@ -253,6 +273,7 @@
     <script src="{% static "js/utils/svg_download.js" %}"></script>
     <script src="{% static "js/utils/table_download.js" %}"></script>
     <script src="{% static "js/utils/filter_list.js" %}"></script>
+    <script src="{% static "js/metadata_table.js" %}"></script>
     <script src="{% static "js/ecological_chart.js" %}"></script>
     <script src="{% static "js/sass_dashboard_multiple.js" %}"></script>
     <script src="{% static "js/sass_dashboard_close.js" %}"></script>

@@ -557,6 +557,7 @@ function onDownloadSummaryCSVClicked(e) {
 function renderDataSources(data) {
     let ulDiv = $('#data-source-list');
     let dataSources = data['source_references'];
+    setMetadataSourceReferences(dataSources);
     let order = ['Reference Category', 'Author/s', 'Year', 'Title', 'Source', 'DOI/URL', 'Notes'];
     let orderedDataSources = [];
     for (var j=0; j<dataSources.length; j++) {
