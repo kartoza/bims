@@ -49,6 +49,7 @@ class TaxaValidator:
         self.file_taxon_name_rank = defaultdict(list)
         self.file_taxon_name_rank_author = defaultdict(list)
         self.file_taxon_name_rank_status = defaultdict(list)
+        self.file_taxon_name_rank_rows = defaultdict(dict)
         self.file_taxon_names_lower = set()
         self.db_accepted_taxon_names_lower = set()
         self.validation_results = []
@@ -348,6 +349,31 @@ class TaxaValidator:
 
         return messages
 
+    def _homonymy_message(self, taxon_name, taxon_rank, name_rank_key,
+                          row_number, other_rows):
+        """Describe how rows sharing a name + rank differ (author and/or
+        subgenus). Such rows are uploaded as separate taxa."""
+        details = self.file_taxon_name_rank_rows[name_rank_key]
+        author, subgenus = details[row_number]
+        author_differs = any(details[r][0] != author for r in other_rows)
+        subgenus_differs = any(details[r][1] != subgenus for r in other_rows)
+
+        if author_differs and subgenus_differs:
+            difference = 'different author(s) and subgenus'
+        elif subgenus_differs:
+            difference = 'a different subgenus'
+        else:
+            difference = 'different author(s)'
+
+        message = (
+            f"WARNING: Homonymy detected - '{taxon_name}' ({taxon_rank}) appears with {difference} "
+            f"(also in row(s) {', '.join(map(str, other_rows))}). "
+            f"The rows will be uploaded as separate taxa."
+        )
+        if author_differs:
+            message += " Verify that one is the accepted name and the other is a synonym."
+        return message
+
     def _first_pass_collect_keys(self, rows):
         """First pass: collect all GBIF keys, FADA IDs, and taxon names to detect duplicates.
 
@@ -376,6 +402,10 @@ class TaxaValidator:
                 self.file_taxon_name_rank[name_rank_key].append(row_number)
                 self.file_taxon_name_rank_status[name_rank_key].append(
                     self._status_category(row))
+                self.file_taxon_name_rank_rows[name_rank_key][row_number] = (
+                    (author or '').lower().strip(),
+                    (subgenus or '').upper(),
+                )
                 # (name, rank, subgenus, author) for true-duplicate detection
                 name_rank_author_key = (
                     taxon_name.lower(),
@@ -415,14 +445,14 @@ class TaxaValidator:
 
         # Check for within-file duplicates (GBIF key)
         if gbif_key and len(self.file_gbif_keys.get(gbif_key, [])) > 1:
-            other_rows = [r-1 for r in self.file_gbif_keys[gbif_key] if r != row_number]
+            other_rows = [r for r in self.file_gbif_keys[gbif_key] if r != row_number]
             messages.append(
                 f"ERROR: Duplicate GBIF col_id {gbif_key} (also in row(s) {', '.join(map(str, other_rows))})"
             )
 
         # Check for within-file duplicates (FADA ID)
         if fada_id and len(self.file_fada_ids.get(fada_id, [])) > 1:
-            other_rows = [r-1 for r in self.file_fada_ids[fada_id] if r != row_number]
+            other_rows = [r for r in self.file_fada_ids[fada_id] if r != row_number]
             messages.append(
                 f"ERROR: Duplicate FADA ID {fada_id} (also in row(s) {', '.join(map(str, other_rows))})"
             )
@@ -450,24 +480,24 @@ class TaxaValidator:
 
             if len(rows_same_name_rank_author) > 1:
                 # Same name + rank + author: true duplicate
-                other_rows = [r - 1 for r in rows_same_name_rank_author if r != row_number]
+                other_rows = [r for r in rows_same_name_rank_author if r != row_number]
                 messages.append(
                     f"ERROR: Duplicate taxon name '{taxon_name}' with same rank '{taxon_rank}' and author(s) '{author}' "
                     f"(also in row(s) {', '.join(map(str, other_rows))})"
                 )
             elif len(rows_same_name_rank) > 1:
-                # Same name + rank but different authors.
+                # Same name + rank but different authors and/or subgenus.
                 statuses = self.file_taxon_name_rank_status.get(name_rank_key, [])
                 is_accepted_synonym_pair = (
                     statuses.count('ACCEPTED') == 1 and
                     statuses.count('SYNONYM') == len(statuses) - 1
                 )
                 if not is_accepted_synonym_pair:
-                    other_rows = [r - 1 for r in rows_same_name_rank if r != row_number]
+                    other_rows = [r for r in rows_same_name_rank if r != row_number]
                     messages.append(
-                        f"WARNING: Homonymy detected - '{taxon_name}' ({taxon_rank}) appears with different author(s) "
-                        f"(also in row(s) {', '.join(map(str, other_rows))}). "
-                        f"Verify that one is the accepted name and the other is a synonym."
+                        self._homonymy_message(
+                            taxon_name, taxon_rank, name_rank_key,
+                            row_number, other_rows)
                     )
 
         # Check for conflicting names in the classification chain

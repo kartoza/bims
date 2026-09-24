@@ -2,7 +2,8 @@ from django_tenants.test.cases import FastTenantTestCase
 
 from bims.scripts.species_keys import (
     TAXON, TAXON_RANK, TAXONOMIC_STATUS, AUTHORS, ACCEPTED_TAXON,
-    PHYLUM, SUBPHYLUM, CLASS, SUBCLASS, ON_GBIF, GBIF_LINK
+    PHYLUM, SUBPHYLUM, CLASS, SUBCLASS, ON_GBIF, GBIF_LINK, SUBGENUS,
+    FADA_ID
 )
 from bims.scripts.taxa_validation import TaxaValidator
 from bims.tests.model_factories import UploadSessionF
@@ -107,6 +108,109 @@ class TestTaxaValidatorHomonymy(FastTenantTestCase):
             messages.extend(self.validator._validate_row(row, row_number=i + 2))
 
         self.assertFalse(any('Homonymy' in m for m in messages))
+
+    def test_synonyms_differing_only_by_subgenus_describe_subgenus(self):
+        """Rows with the same name, rank and author that differ only in
+        subgenus are reported as a subgenus difference, not an author one."""
+        rows = [
+            self._make_row(
+                'Candonopsis williami', 'Species', 'Synonym',
+                'Karanovic & Marmonier, 2002',
+                accepted_taxon='Abcandonopsis williami'),
+            dict(self._make_row(
+                'Candonopsis williami', 'Species', 'Synonym',
+                'Karanovic & Marmonier, 2002',
+                accepted_taxon='Abcandonopsis williami'),
+                **{SUBGENUS: 'Abcandonopsis'}),
+        ]
+
+        self.validator._first_pass_collect_keys(rows)
+
+        messages = self.validator._validate_row(rows[0], row_number=2)
+
+        homonymy = [m for m in messages if 'Homonymy' in m]
+        self.assertEqual(len(homonymy), 1)
+        self.assertIn('a different subgenus', homonymy[0])
+        self.assertNotIn('author', homonymy[0])
+        self.assertIn('uploaded as separate taxa', homonymy[0])
+        self.assertFalse(any('Duplicate taxon name' in m for m in messages))
+
+    def test_other_rows_reported_with_spreadsheet_row_numbers(self):
+        """Row references point at the spreadsheet row (header is row 1)."""
+        rows = [
+            self._make_row(
+                'Gordius lineatus', 'Species', 'Accepted', 'Leidy, 1851'),
+            self._make_row(
+                'Gordius lineatus', 'Species', 'Accepted', 'Villot, 1886'),
+        ]
+
+        self.validator._first_pass_collect_keys(rows)
+
+        messages_row2 = self.validator._validate_row(rows[0], row_number=2)
+        messages_row3 = self.validator._validate_row(rows[1], row_number=3)
+
+        self.assertTrue(any('also in row(s) 3)' in m for m in messages_row2))
+        self.assertTrue(any('also in row(s) 2)' in m for m in messages_row3))
+
+    def test_author_and_subgenus_both_differ(self):
+        rows = [
+            self._make_row(
+                'Candonopsis williami', 'Species', 'Synonym', 'Smith, 1900',
+                accepted_taxon='Abcandonopsis williami'),
+            dict(self._make_row(
+                'Candonopsis williami', 'Species', 'Synonym',
+                'Karanovic & Marmonier, 2002',
+                accepted_taxon='Abcandonopsis williami'),
+                **{SUBGENUS: 'Abcandonopsis'}),
+        ]
+
+        self.validator._first_pass_collect_keys(rows)
+
+        messages = self.validator._validate_row(rows[1], row_number=3)
+
+        self.assertTrue(any(
+            'different author(s) and subgenus' in m and
+            'Verify that one is the accepted name' in m
+            for m in messages
+        ))
+
+    def test_author_only_difference_keeps_accepted_synonym_advice(self):
+        rows = [
+            self._make_row(
+                'Gordius lineatus', 'Species', 'Accepted', 'Leidy, 1851'),
+            self._make_row(
+                'Gordius lineatus', 'Species', 'Accepted', 'Villot, 1886'),
+        ]
+
+        self.validator._first_pass_collect_keys(rows)
+
+        messages = self.validator._validate_row(rows[0], row_number=2)
+
+        homonymy = [m for m in messages if 'Homonymy' in m]
+        self.assertEqual(len(homonymy), 1)
+        self.assertIn('appears with different author(s) (', homonymy[0])
+        self.assertNotIn('subgenus', homonymy[0])
+        self.assertIn('Verify that one is the accepted name', homonymy[0])
+
+    def test_duplicate_ids_reported_with_spreadsheet_row_numbers(self):
+        rows = [
+            dict(self._make_row(
+                'Alicenula furcabdominis', 'Species', 'Accepted', 'Keyser, 1976'),
+                **{GBIF_LINK: 'https://www.gbif.org/taxon/BS37', FADA_ID: '500176'}),
+            dict(self._make_row(
+                'Darwinula furcabdominis', 'Species', 'Synonym', 'Keyser, 1976',
+                accepted_taxon='Alicenula furcabdominis'),
+                **{GBIF_LINK: 'https://www.gbif.org/taxon/BS37', FADA_ID: '500176'}),
+        ]
+        self.validator._validate_gbif_key = lambda row, key: []
+
+        self.validator._first_pass_collect_keys(rows)
+
+        messages = self.validator._validate_row(rows[0], row_number=2)
+
+        self.assertIn(
+            'ERROR: Duplicate GBIF col_id BS37 (also in row(s) 3)', messages)
+        self.assertIn('ERROR: Duplicate FADA ID 500176 (also in row(s) 3)', messages)
 
     def test_same_name_rank_author_still_flagged_as_duplicate(self):
         """Exact duplicates (same name, rank, and author) must still be
