@@ -569,15 +569,13 @@ class LocationSite(AbstractValidation):
 
     def __init__(self, *args, **kwargs):
         super(LocationSite, self).__init__(*args, **kwargs)
-        try:
-            self.__original_centroid = self.get_centroid()
-            self.__original_refined_geomorphological = (
-                self.refined_geomorphological
-            )
-            self.__original_latitude = self.latitude
-            self.__original_longitude = self.longitude
-        except LocationType.DoesNotExist:
-            return
+        # Don't touch related objects here: select_related caches are only
+        # attached after __init__, so doing so queries once per instance.
+        self.__original_refined_geomorphological = (
+            self.refined_geomorphological
+        )
+        self.__original_latitude = self.latitude
+        self.__original_longitude = self.longitude
 
 
 def update_location_site_context(location_site_id):
