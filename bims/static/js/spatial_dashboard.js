@@ -906,6 +906,44 @@
             });
         }
 
+        let occurrenceDownloadBtn = document.getElementById('occurrence-download-btn');
+        if (occurrenceDownloadBtn) {
+            occurrenceDownloadBtn.addEventListener('click', function () {
+                const alertModalBody = $('#alertModalBody');
+                const showAlert = function (message) {
+                    alertModalBody.html(message);
+                    $('#alertModal').modal({'keyboard': false, 'backdrop': 'static'});
+                };
+                if (!is_logged_in) {
+                    showAlert('Please log in first.');
+                    return;
+                }
+                showDownloadPopup('CSV', 'Occurrence Data', function (downloadRequestId) {
+                    occurrenceDownloadBtn.disabled = true;
+                    const sep = queryString ? '&' : '?';
+                    const downloadUrl = '/api/csv-download/' + queryString + sep +
+                        'downloadRequestId=' + (downloadRequestId || '');
+                    $.get({
+                        url: downloadUrl,
+                        dataType: 'json',
+                        success: function (data) {
+                            if (data['status'] !== 'failed') {
+                                showAlert(downloadRequestMessage);
+                            } else {
+                                showAlert(data['message']);
+                            }
+                        },
+                        error: function () {
+                            showAlert('Error submitting occurrence data download request.');
+                        },
+                        complete: function () {
+                            occurrenceDownloadBtn.disabled = false;
+                        }
+                    });
+                }, false);
+            });
+        }
+
         document.querySelectorAll('[data-download]').forEach(function (button) {
             button.addEventListener('click', function () {
                 const type = button.getAttribute('data-download');

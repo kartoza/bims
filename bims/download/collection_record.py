@@ -253,7 +253,7 @@ def download_collection_records(
                 pass
         return
 
-    taxon_group = collection_results.first().module_group
+    from bims.models.taxon_group import TaxonGroup
     upload_template_headers = []
 
     def _extend_headers(headers):
@@ -265,22 +265,31 @@ def download_collection_records(
                 upload_template_headers.append(h)
                 seen.add(h)
 
-    legacy_field = getattr(taxon_group, 'occurrence_upload_template', None)
-    if legacy_field:
-        try:
-            with open(legacy_field.path, 'r', encoding='utf-8') as csvfile:
-                reader = csv.DictReader(csvfile)
-                _extend_headers(reader.fieldnames)
-        except (FileNotFoundError, UnicodeDecodeError, AttributeError):
-            pass
+    # Results can span several taxon groups (e.g. the summary dashboard),
+    # so collect template headers from every group present.
+    taxon_group_ids = collection_results.order_by().values_list(
+        'module_group_id', flat=True
+    ).distinct()
+    taxon_groups = TaxonGroup.objects.filter(
+        id__in=taxon_group_ids
+    ).prefetch_related('occurrence_upload_templates').order_by('id')
 
-    if hasattr(taxon_group, 'occurrence_upload_templates'):
+    for taxon_group in taxon_groups:
+        legacy_field = getattr(taxon_group, 'occurrence_upload_template', None)
+        if legacy_field:
+            try:
+                with open(legacy_field.path, 'r', encoding='utf-8') as csvfile:
+                    reader = csv.DictReader(csvfile)
+                    _extend_headers(reader.fieldnames)
+            except (FileNotFoundError, UnicodeDecodeError, AttributeError, ValueError):
+                pass
+
         for tpl in taxon_group.occurrence_upload_templates.all():
             try:
                 with open(tpl.file.path, 'r', encoding='utf-8') as csvfile:
                     reader = csv.DictReader(csvfile)
                     _extend_headers(reader.fieldnames)
-            except (FileNotFoundError, UnicodeDecodeError, AttributeError):
+            except (FileNotFoundError, UnicodeDecodeError, AttributeError, ValueError):
                 continue
 
     def write_batch_to_csv(header, rows, _path_file, _start_index):
