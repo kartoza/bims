@@ -4,33 +4,30 @@ geoserver and the celery worker run in docker-compose.dev.yml.
 
 Use with: DJANGO_SETTINGS_MODULE=core.settings.dev_host
 """
+from django.core.exceptions import ImproperlyConfigured
+
 from .dev_docker import *  # noqa
 
-DEPLOYMENT_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(
-        os.path.abspath(__file__)))),
-    'deployment'
-)
-
 DATABASES['default'].update({
-    'HOST': os.getenv('DATABASE_HOST', 'localhost'),
-    'PORT': int(os.getenv('DATABASE_PORT', 6543)),
+    'HOST': 'localhost',
+    'PORT': 6543,
 })
 
-CACHES['default']['LOCATION'] = os.getenv(
-    'CACHE_LOCATION', 'localhost:11211')
+CACHES['default']['LOCATION'] = 'localhost:11211'
 
-CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'amqp://localhost:5672')
+CELERY_BROKER_URL = 'amqp://localhost:5672'
 
-# Same directories the worker container mounts as /home/web/media and
-# /home/web/static, so both sides see the same files.
-MEDIA_ROOT = os.getenv(
-    'MEDIA_ROOT', os.path.join(DEPLOYMENT_DIR, 'media'))
-TEMP_FOLDER = MEDIA_ROOT + '/temp'
-STATIC_ROOT = os.getenv(
-    'STATIC_ROOT', os.path.join(DEPLOYMENT_DIR, 'static'))
+for _path in (MEDIA_ROOT, STATIC_ROOT):
+    if not os.path.isdir(_path):
+        raise ImproperlyConfigured(
+            f'{_path} is missing. Link it to the deployment directory the '
+            f'containers mount, e.g.:\n'
+            f'  sudo mkdir -p /home/web\n'
+            f'  sudo ln -s <repo>/deployment/{os.path.basename(_path)} {_path}'
+        )
 
-GEOSERVER_LOCATION = os.getenv(
-    'GEOSERVER_LOCATION', 'http://localhost:63305/geoserver/')
-GEOSERVER_PUBLIC_LOCATION = os.getenv(
-    'GEOSERVER_PUBLIC_LOCATION', 'http://localhost:63305/geoserver/')
+GEOSERVER_LOCATION = 'http://localhost:63305/geoserver/'
+GEOSERVER_PUBLIC_LOCATION = 'http://localhost:63305/geoserver/'
+
+# celery.log in the repo root is created by the (root) containers.
+LOGGING['handlers']['celery']['filename'] = 'celery-host.log'
