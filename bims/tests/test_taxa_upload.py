@@ -1658,3 +1658,236 @@ class TestAddendumUpload(FastTenantTestCase):
         taxon = Taxonomy.objects.get(canonical_name='Aquanothrus natalensis')
         self.assertEqual(taxon.addendum, TaxonAddendum.SENSU_LATO.name)
         self.assertNotIn('s.l', taxon.canonical_name.lower())
+
+
+@mock.patch('bims.scripts.taxa_upload.is_fada_site', return_value=True)
+@mock.patch('bims.scripts.taxa_upload.get_species_by_col_id')
+@mock.patch('bims.scripts.taxa_upload.fetch_all_species_from_gbif')
+class TestCollidingTaxaUpload(FastTenantTestCase):
+    """
+    Rows that match an existing taxon but are a different taxonomic concept
+    (different FADA ID or author) must become their own record: no lookup
+    (COL id, name, author refresh or local get_or_create) may hand back and
+    overwrite the rejected taxon.
+    """
+
+    AUTHOR = 'Karanovic & Marmonier, 2002'
+
+    def setUp(self):
+        self.taxon_group = TaxonGroupF.create()
+        TaxonomyF.create(
+            canonical_name='Abcandonopsis williami',
+            scientific_name='Abcandonopsis williami',
+            rank='SPECIES',
+            taxonomic_status='ACCEPTED',
+            fada_id='500172',
+        )
+
+    def _existing_synonym(self, fada_id='SYN-500128', col_id=None, author=AUTHOR):
+        return TaxonomyF.create(
+            canonical_name='Candonopsis williami',
+            scientific_name=f'Candonopsis williami {author}'.strip(),
+            author=author,
+            rank='SPECIES',
+            taxonomic_status='SYNONYM',
+            fada_id=fada_id,
+            col_id=col_id,
+        )
+
+    def _synonym_row(self, fada_id, col_id=None, subgenus='', author=AUTHOR,
+                     on_gbif='Yes'):
+        row = {
+            'Taxon Rank': 'Species',
+            'Kingdom': 'Animalia',
+            'Phylum': 'Arthropoda',
+            'Class': 'Ostracoda',
+            'Order': 'Podocopida',
+            'Genus': 'Candonopsis',
+            'SubGenus': subgenus,
+            'Species': 'williami',
+            'Taxon': 'Candonopsis williami',
+            'Author(s)': author,
+            'Taxonomic status': 'Synonym',
+            'Accepted Taxon': 'Abcandonopsis williami',
+            'FADA ID': fada_id,
+            'On GBIF': on_gbif,
+        }
+        if col_id:
+            row['GBIF Link'] = f'https://www.gbif.org/taxon/{col_id}'
+        return row
+
+    @staticmethod
+    def _col_record(col_id, name='Candonopsis williami', status='synonym'):
+        return {
+            'usage': {
+                'key': col_id,
+                'canonicalName': name,
+                'name': name,
+                'rank': 'SPECIES',
+                'status': status,
+            },
+        }
+
+    def _process(self, row):
+        processor = TaxaProcessor()
+        processor.all_keys = {}
+        with mock.patch('bims.scripts.taxa_upload.preferences') as mock_prefs:
+            mock_prefs.SiteSetting.auto_validate_taxa_on_upload = True
+            processor.process_data(row, self.taxon_group)
+
+    def _synonyms(self):
+        return Taxonomy.objects.filter(
+            canonical_name='Candonopsis williami', taxonomic_status='SYNONYM')
+
+    def test_synonyms_sharing_col_id_differing_by_subgenus_stay_separate(
+        self, mock_fetch_gbif, mock_get_species_by_col_id, _mock_is_fada_site
+    ):
+        """
+        FADA lists "Candonopsis williami" and "Candonopsis (Abcandonopsis)
+        williami" as two synonyms (different FADA IDs) that carry the same
+        COL id. The second row must not overwrite the first one's record.
+        """
+        first_synonym = self._existing_synonym(col_id='QLSH')
+        mock_get_species_by_col_id.return_value = self._col_record('QLSH')
+        # Mirror fetch_all_species_from_gbif: both a COL id and a name lookup
+        # resolve to the record already holding QLSH.
+        mock_fetch_gbif.side_effect = (
+            lambda **kwargs: Taxonomy.objects.filter(col_id='QLSH').first())
+
+        self._process(self._synonym_row(
+            'SYN-500129', col_id='QLSH', subgenus='Abcandonopsis'))
+
+        self.assertEqual(self._synonyms().count(), 2)
+
+        first_synonym.refresh_from_db()
+        self.assertEqual(first_synonym.fada_id, 'SYN-500128')
+        self.assertEqual(first_synonym.col_id, 'QLSH')
+        self.assertIsNone(first_synonym.subgenus)
+
+        second_synonym = self._synonyms().get(fada_id='SYN-500129')
+        self.assertIsNone(second_synonym.col_id)
+        self.assertEqual(
+            second_synonym.subgenus.canonical_name, 'Candonopsis (Abcandonopsis)')
+
+    def test_col_id_fetch_skipped_when_col_id_belongs_to_rejected_taxon(
+        self, mock_fetch_gbif, mock_get_species_by_col_id, _mock_is_fada_site
+    ):
+        self._existing_synonym(col_id='QLSH')
+        mock_get_species_by_col_id.return_value = self._col_record('QLSH')
+        mock_fetch_gbif.return_value = None
+
+        self._process(self._synonym_row('SYN-500129', col_id='QLSH'))
+
+        self.assertFalse(
+            [c for c in mock_fetch_gbif.call_args_list
+             if c.kwargs.get('col_id') == 'QLSH'],
+            'Fetching by a COL id owned by the rejected taxon returns that taxon.'
+        )
+        self.assertEqual(self._synonyms().count(), 2)
+
+    def test_synonym_does_not_take_col_id_of_accepted_taxon(
+        self, mock_fetch_gbif, mock_get_species_by_col_id, _mock_is_fada_site
+    ):
+        """
+        A synonym row carrying its accepted name's COL id becomes its own
+        record, and the COL id stays unique to the accepted taxon.
+        """
+        mock_fetch_gbif.return_value = None
+        accepted = Taxonomy.objects.get(fada_id='500172')
+        accepted.col_id = 'ABCW1'
+        accepted.save()
+        mock_get_species_by_col_id.return_value = self._col_record(
+            'ABCW1', name='Abcandonopsis williami', status='accepted')
+
+        self._process(self._synonym_row('SYN-500128', col_id='ABCW1'))
+
+        synonym = Taxonomy.objects.get(fada_id='SYN-500128')
+        self.assertNotEqual(synonym.pk, accepted.pk)
+        self.assertIsNone(synonym.col_id)
+        self.assertEqual(
+            list(Taxonomy.objects.filter(col_id='ABCW1')), [accepted])
+        accepted.refresh_from_db()
+        self.assertEqual(accepted.fada_id, '500172')
+
+    def test_name_lookup_returning_rejected_taxon_is_discarded(
+        self, mock_fetch_gbif, mock_get_species_by_col_id, _mock_is_fada_site
+    ):
+        """No COL link: the name lookup resolves to the existing synonym with
+        a different FADA ID, which must not be reused."""
+        first_synonym = self._existing_synonym()
+        mock_fetch_gbif.return_value = first_synonym
+
+        self._process(self._synonym_row('SYN-500129'))
+
+        self.assertEqual(self._synonyms().count(), 2)
+        first_synonym.refresh_from_db()
+        self.assertEqual(first_synonym.fada_id, 'SYN-500128')
+        mock_get_species_by_col_id.assert_not_called()
+
+    def test_author_refresh_returning_rejected_taxon_is_ignored(
+        self, mock_fetch_gbif, mock_get_species_by_col_id, _mock_is_fada_site
+    ):
+        """Without an author the new record triggers the GBIF author refresh;
+        a refresh that resolves to the rejected taxon must not replace it."""
+        first_synonym = self._existing_synonym()
+        mock_fetch_gbif.return_value = first_synonym
+
+        self._process(self._synonym_row('SYN-500129', author=''))
+
+        self.assertEqual(self._synonyms().count(), 2)
+        first_synonym.refresh_from_db()
+        self.assertEqual(first_synonym.fada_id, 'SYN-500128')
+        self.assertTrue(self._synonyms().filter(fada_id='SYN-500129').exists())
+
+    def test_local_record_not_merged_into_rejected_taxon(
+        self, mock_fetch_gbif, mock_get_species_by_col_id, _mock_is_fada_site
+    ):
+        """Not on GBIF: get_or_create on name/author/status would return the
+        existing synonym, so a new record must be created instead."""
+        first_synonym = self._existing_synonym()
+
+        self._process(self._synonym_row('SYN-500129', on_gbif='No'))
+
+        mock_fetch_gbif.assert_not_called()
+        self.assertEqual(self._synonyms().count(), 2)
+        first_synonym.refresh_from_db()
+        self.assertEqual(first_synonym.fada_id, 'SYN-500128')
+
+    def test_different_author_sharing_col_id_creates_separate_taxon(
+        self, mock_fetch_gbif, mock_get_species_by_col_id, _mock_is_fada_site
+    ):
+        """An author conflict (no FADA IDs involved) is also a different
+        taxon, so the shared COL id must not merge the two."""
+        first_synonym = self._existing_synonym(fada_id='', col_id='QLSH')
+        mock_get_species_by_col_id.return_value = self._col_record('QLSH')
+        mock_fetch_gbif.side_effect = (
+            lambda **kwargs: Taxonomy.objects.filter(col_id='QLSH').first())
+
+        self._process(self._synonym_row(
+            'SYN-500129', col_id='QLSH', author='Smith, 1900'))
+
+        self.assertEqual(self._synonyms().count(), 2)
+        first_synonym.refresh_from_db()
+        self.assertEqual(first_synonym.author, self.AUTHOR)
+        self.assertEqual(first_synonym.col_id, 'QLSH')
+        new_synonym = self._synonyms().exclude(pk=first_synonym.pk).get()
+        self.assertEqual(new_synonym.fada_id, 'SYN-500129')
+        self.assertIsNone(new_synonym.col_id)
+
+    def test_reupload_of_same_row_updates_existing_taxon(
+        self, mock_fetch_gbif, mock_get_species_by_col_id, _mock_is_fada_site
+    ):
+        """A row with the same FADA ID and COL id still updates the existing
+        record rather than creating a duplicate."""
+        existing = self._existing_synonym(col_id='QLSH')
+        mock_get_species_by_col_id.return_value = self._col_record('QLSH')
+        mock_fetch_gbif.return_value = None
+
+        self._process(self._synonym_row(
+            'SYN-500128', col_id='QLSH', subgenus='Abcandonopsis'))
+
+        self.assertEqual(list(self._synonyms()), [existing])
+        existing.refresh_from_db()
+        self.assertEqual(existing.col_id, 'QLSH')
+        self.assertEqual(
+            existing.subgenus.canonical_name, 'Candonopsis (Abcandonopsis)')

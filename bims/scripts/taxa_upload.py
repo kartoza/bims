@@ -1129,6 +1129,7 @@ class TaxaProcessor(object):
 
         proposal = None
         new_taxon = False
+        rejected_taxon_ids = set()
 
         try:
             taxonomy = None
@@ -1188,6 +1189,7 @@ class TaxaProcessor(object):
                             taxon_name, candidate.author, candidate_status, candidate_fada_id,
                             authors, csv_status, csv_fada_id,
                         )
+                        rejected_taxon_ids.add(candidate.id)
                     else:
                         taxonomy = candidate
                         logger.debug('%s already in the system', taxon_name)
@@ -1198,6 +1200,8 @@ class TaxaProcessor(object):
                     taxonomy = taxa.first()
                     if fada_id and taxonomy.fada_id != fada_id:
                         # New taxon
+                        if taxonomy.fada_id:
+                            rejected_taxon_ids.add(taxonomy.id)
                         taxonomy = None
                         logger.debug(
                             '%s exists with different rank, treating as new taxon',
@@ -1205,7 +1209,20 @@ class TaxaProcessor(object):
                     else:
                         taxonomy.rank = _safe_upper(rank)
 
-            if not taxonomy and col_id and should_fetch_from_gbif:
+            # The COL id belongs to a taxon this row was just rejected from:
+            # fetching by it would return and overwrite that taxon.
+            col_id_taken = bool(
+                not taxonomy and col_id and rejected_taxon_ids and
+                Taxonomy.objects.filter(
+                    id__in=rejected_taxon_ids, col_id=col_id).exists()
+            )
+            if col_id_taken:
+                logger.info(
+                    'COL id %s already belongs to a different taxon than %r; '
+                    'not fetching by it.', col_id, taxon_name,
+                )
+
+            if not taxonomy and col_id and should_fetch_from_gbif and not col_id_taken:
                 taxonomy = fetch_all_species_from_gbif(
                     col_id=col_id,
                     taxonomic_rank=rank,
@@ -1213,6 +1230,8 @@ class TaxaProcessor(object):
                     is_synonym=is_synonym,
                     preserve_taxonomic_status=is_fada_site(),
                 )
+                if taxonomy and taxonomy.id in rejected_taxon_ids:
+                    taxonomy = None
                 if taxonomy:
                     new_taxon = True
                     # Ensure synonyms don't have parents
@@ -1245,6 +1264,8 @@ class TaxaProcessor(object):
                     preserve_taxonomic_status=is_fada_site(),
                     **classifiers
                 )
+                if taxonomy and taxonomy.id in rejected_taxon_ids:
+                    taxonomy = None
                 if taxonomy:
                     new_taxon = True
                     # Ensure synonyms don't have parents
@@ -1270,13 +1291,18 @@ class TaxaProcessor(object):
                     # Synonyms should not have a parent
                     parent = None
                 new_taxon = True
-                taxonomy, _created2 = Taxonomy.objects.get_or_create(
+                taxon_fields = dict(
                     scientific_name=scientific_name,
                     canonical_name=taxon_name,
                     rank=TaxonomicRank[_safe_upper(rank)].name,
                     parent=parent,
                     taxonomic_status=taxonomic_status.upper()
                 )
+                taxonomy, _created2 = Taxonomy.objects.get_or_create(**taxon_fields)
+                if taxonomy.id in rejected_taxon_ids:
+                    # Same name/author/status as a rejected taxon (e.g. it only
+                    # differs by subgenus or FADA ID) - never merge into it.
+                    taxonomy = Taxonomy.objects.create(**taxon_fields)
             if is_species and subgenus:
                 genus_for_sg = _safe_strip(self.get_row_value(row, GENUS))
                 bare_sg = _bare_subgenus(subgenus, genus_for_sg)
@@ -1340,6 +1366,8 @@ class TaxaProcessor(object):
                     preserve_taxonomic_status=is_fada_site(),
                     **({'kingdom': csv_kingdom} if csv_kingdom else {})
                 )
+                if refreshed and refreshed.id in rejected_taxon_ids:
+                    refreshed = None
                 taxonomy = refreshed or taxonomy
 
                 # Ensure synonyms don't have parents after refresh
@@ -1489,7 +1517,12 @@ class TaxaProcessor(object):
                     if use_proposal and proposal is not None:
                         proposal.fada_id = fada_id
 
-            if col_id:
+            if col_id and Taxonomy.objects.filter(col_id=col_id).exclude(id=taxonomy.id).exists():
+                logger.warning(
+                    'COL id %s already belongs to another taxon; not assigning '
+                    'it to %r.', col_id, taxon_name,
+                )
+            elif col_id:
                 self._update_taxon_and_proposal(taxonomy, proposal, use_proposal, new_taxon, 'col_id', col_id)
 
             # Tags + biographic distributions
