@@ -344,7 +344,6 @@ urlpatterns += [  # '',
             include('bims.api_urls')),
 ]
 
-# Thermals
 urlpatterns += [
     re_path(r'^thermal-dashboard/$',
             ThermalDashboardView.as_view(),

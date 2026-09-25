@@ -103,3 +103,7 @@ body {
 .chart-bottom-title {
     font-size: 9pt;
 }
+
+.download-container {
+    padding-left: 15px; padding-right: 15px; padding-bottom: 10px;
+}
