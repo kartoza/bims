@@ -38,6 +38,11 @@
         </div>
         <div class="container" style="margin-top: 40px">
 
+            {% if messages %}
+                {% for message in messages %}
+                    <div class="alert {% if message.tags == 'error' %}alert-danger{% else %}alert-{{ message.tags }}{% endif %}">{{ message }}</div>
+                {% endfor %}
+            {% endif %}
             <form enctype="multipart/form-data" name="source_reference_form" method="post">
                 {% csrf_token %}
                 <div class="form-group row">
@@ -224,6 +229,37 @@
                                accept=".pdf,.doc,.docx,.txt"/>
                         <small class="form-text text-muted">
                             Upload a PDF or Word document describing the metadata for this source reference.
+                        </small>
+                    </div>
+                </div>
+                <div class="form-group row">
+                    <label for="gbif_metadata_csv" class="col-sm-2 col-form-label">GBIF metadata (CSV)</label>
+                    <div class="col-sm-10">
+                        {% if object.gbif_metadata_file %}
+                            <div class="alert alert-light">
+                                <p>
+                                    Current file:
+                                    <a href="{{ object.gbif_metadata_file.url }}" target="_blank">
+                                        {{ object.gbif_metadata_file.name }}
+                                    </a>
+                                </p>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" value="1"
+                                           id="remove_gbif_metadata" name="remove_gbif_metadata">
+                                    <label class="form-check-label" for="remove_gbif_metadata">
+                                        Remove GBIF metadata (the generic description will be published)
+                                    </label>
+                                </div>
+                            </div>
+                        {% endif %}
+                        <input type="file" name="gbif_metadata_csv" id="gbif_metadata_csv" class="form-control"
+                               accept=".csv"/>
+                        <small class="form-text text-muted">
+                            Dataset metadata published to GBIF, one row per dataset. Columns: id (optional here),
+                            project_identifier, title, description, license (CC0 1.0, CC BY 4.0 or CC BY-NC 4.0),
+                            taxonomic_coverage, geographic_description, temporal_start, temporal_end (YYYY-MM-DD),
+                            sampling_description, purpose. Without it the generic description is used.
+                            This source reference's id is <strong>{{ object.id }}</strong>.
                         </small>
                     </div>
                 </div>

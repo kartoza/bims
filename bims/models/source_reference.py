@@ -7,6 +7,7 @@ import json
 from collections import OrderedDict
 
 from django.contrib.sites.models import Site
+from django.core.validators import FileExtensionValidator
 from django.db import models
 from django.conf import settings
 from django.db.models import Q
@@ -116,6 +117,19 @@ class SourceReference(PolymorphicModel):
         null=True,
         blank=True,
         help_text='Upload metadata documentation (PDF or Word document) describing this source reference'
+    )
+    gbif_metadata_file = models.FileField(
+        upload_to='source_reference_gbif_metadata/',
+        null=True,
+        blank=True,
+        validators=[FileExtensionValidator(['csv'])],
+        help_text=(
+            'CSV with the dataset metadata published to GBIF. Columns: id, '
+            'project_identifier, title, description, license, '
+            'taxonomic_coverage, geographic_description, temporal_start, '
+            'temporal_end, sampling_description, purpose. Without it the '
+            'generic dataset description is published.'
+        )
     )
     source_authors = models.ManyToManyField(
         Author,
