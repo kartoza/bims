@@ -944,6 +944,46 @@
             });
         }
 
+        let checklistDownloadBtn = document.getElementById('checklist-download-btn');
+        if (checklistDownloadBtn) {
+            checklistDownloadBtn.addEventListener('click', function () {
+                const alertModalBody = $('#alertModalBody');
+                const showAlert = function (message) {
+                    alertModalBody.html(message);
+                    $('#alertModal').modal({'keyboard': false, 'backdrop': 'static'});
+                };
+                if (!is_logged_in) {
+                    showAlert('Please log in first.');
+                    return;
+                }
+                // Filters are read server-side from the dashboard URL stored
+                // on the download request.
+                showDownloadPopup('PDF', 'Checklist', function (downloadRequestId) {
+                    checklistDownloadBtn.disabled = true;
+                    $.ajax({
+                        url: '/api/checklist/download/',
+                        type: 'POST',
+                        dataType: 'json',
+                        headers: {'X-CSRFToken': csrfmiddlewaretoken},
+                        data: {'downloadRequestId': downloadRequestId},
+                        success: function (data) {
+                            if (data['status'] === 'failed') {
+                                showAlert('ERROR : ' + (data['message'] || 'Unexpected Error'));
+                            } else {
+                                showAlert(downloadRequestMessage);
+                            }
+                        },
+                        error: function () {
+                            showAlert('Error submitting checklist download request.');
+                        },
+                        complete: function () {
+                            checklistDownloadBtn.disabled = false;
+                        }
+                    });
+                }, false);
+            });
+        }
+
         document.querySelectorAll('[data-download]').forEach(function (button) {
             button.addEventListener('click', function () {
                 const type = button.getAttribute('data-download');

@@ -39,8 +39,12 @@ def parse_url_to_filters(url):
     fragment = parsed_url.fragment
     if '?' in fragment:
         query_string = fragment.split('?', 1)[1]
-    else:
+    elif fragment:
         query_string = fragment
+    else:
+        # Dashboards such as the summary dashboard keep their filters
+        # in the regular query string instead of the fragment.
+        query_string = parsed_url.query
     query_params = parse_qs(query_string)
     filters = {key: value[0] if len(value) == 1 else value for key, value in query_params.items()}
     return filters

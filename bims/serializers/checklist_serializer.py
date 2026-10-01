@@ -119,7 +119,13 @@ class ChecklistBaseSerializer(SerializerContextCache):
         bio_context = self.context.get(
             'collection_records', BiologicalCollectionRecord.objects.all())
         if obj.id not in self._bio_data_cache:
-            bio_records = bio_context.filter(taxonomy=obj)
+            record_ids_by_taxon = self.context.get('record_ids_by_taxon')
+            if record_ids_by_taxon is not None:
+                bio_records = BiologicalCollectionRecord.objects.filter(
+                    id__in=record_ids_by_taxon.get(obj.id, [])
+                )
+            else:
+                bio_records = bio_context.filter(taxonomy=obj)
             self._bio_data_cache[obj.id] = bio_records
         return self._bio_data_cache[obj.id]
 

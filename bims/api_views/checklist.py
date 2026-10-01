@@ -1,3 +1,4 @@
+from collections import defaultdict
 import csv
 import os
 import re
@@ -72,6 +73,17 @@ def checklist_collection_records(download_request: DownloadRequest):
     return collection_records
 
 
+def _record_ids_by_taxon(collection_records, taxonomy_ids):
+    """Map taxonomy id -> filtered record ids with one query per batch."""
+    record_ids = defaultdict(list)
+    rows = collection_records.filter(
+        taxonomy_id__in=taxonomy_ids
+    ).order_by().values_list('taxonomy_id', 'id')
+    for taxonomy_id, record_id in rows.iterator():
+        record_ids[taxonomy_id].append(record_id)
+    return record_ids
+
+
 def generate_checklist(download_request_id):
     if not download_request_id:
         return False
@@ -96,11 +108,16 @@ def generate_checklist(download_request_id):
     )
     module_name = ''
 
-    if collection_records.count() > 0:
-        module_name = collection_records.values_list(
+    module_names = list(
+        collection_records.order_by().values_list(
             'module_group__name',
             flat=True
-        )[0]
+        ).distinct()[:2]
+    )
+    if len(module_names) == 1:
+        module_name = module_names[0] or ''
+    elif len(module_names) > 1:
+        module_name = 'Multiple Taxon Groups'
 
     if (
         download_request.resource_type and
@@ -271,7 +288,9 @@ def generate_pdf_checklist(download_request, module_name, collection_records, ba
                 taxa,
                 many=True,
                 context={
-                    'collection_records': collection_records
+                    'collection_records': collection_records,
+                    'record_ids_by_taxon': _record_ids_by_taxon(
+                        collection_records, unique_taxonomy_ids),
                 }
             )
             for taxon_obj, taxon in zip(list(taxa), list(taxon_serializer.data)):
@@ -399,7 +418,9 @@ def process_batch(record_taxonomy_ids, writer, written_taxa_ids, collection_reco
             taxa,
             many=True,
             context={
-                'collection_records': collection_records
+                'collection_records': collection_records,
+                'record_ids_by_taxon': _record_ids_by_taxon(
+                    collection_records, unique_taxonomy_ids),
             }
         )
 
