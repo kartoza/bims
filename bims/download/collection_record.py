@@ -1,10 +1,9 @@
 import logging
 import csv
+import itertools
 import os
 import time
 import gc
-import tempfile
-import shutil
 
 from django.utils import timezone
 
@@ -13,25 +12,40 @@ from bims.scripts.collection_csv_keys import PARK_OR_MPA_NAME, END_EMBARGO_DATE
 
 logger = logging.getLogger(__name__)
 
+# Records serialized per batch. Larger batches mean fewer bulk lookups per
+# record, at the cost of memory and less frequent progress updates.
+DOWNLOAD_BATCH_SIZE = 2000
 
-def queryset_iterator(qs, batch_size=500, gc_collect=True):
-    iterator = (
-        qs.values_list('pk', flat=True).order_by('pk').distinct().iterator()
+
+def collection_record_batches(qs, batch_size=500):
+    """Yield lists of records from qs in primary key order, loaded with
+    the relations the one-row serializer reads.
+
+    The primary keys are streamed from qs once; each batch is then fetched
+    by primary key alone, so the search filters and joins of qs are not
+    re-evaluated for every batch.
+    """
+    from bims.models import BiologicalCollectionRecord
+    from bims.serializers.bio_collection_serializer import (
+        EXPORT_SELECT_RELATED,
+        EXPORT_PREFETCH_RELATED,
     )
-    eof = False
-    while not eof:
-        primary_key_buffer = []
-        try:
-            while len(primary_key_buffer) < batch_size:
-                primary_key_buffer.append(next(iterator))
-        except StopIteration:
-            eof = True
-        for obj in qs.filter(
-                pk__in=primary_key_buffer
-        ).order_by('pk').iterator(chunk_size=batch_size):
-            yield obj
-        if gc_collect:
-            gc.collect()
+
+    pk_iterator = (
+        qs.values_list('pk', flat=True).order_by('pk').distinct().iterator(
+            chunk_size=batch_size
+        )
+    )
+    while True:
+        pks = list(itertools.islice(pk_iterator, batch_size))
+        if not pks:
+            return
+        yield list(
+            BiologicalCollectionRecord.objects.filter(pk__in=pks)
+            .select_related(*EXPORT_SELECT_RELATED)
+            .prefetch_related(*EXPORT_PREFETCH_RELATED)
+            .order_by('pk')
+        )
 
 
 HEADER_TITLES = {
@@ -147,7 +161,8 @@ def download_collection_records(
 ):
     from django.contrib.auth import get_user_model
     from bims.serializers.bio_collection_serializer import (
-        BioCollectionOneRowSerializer
+        BioCollectionOneRowSerializer,
+        prefetch_batch,
     )
     from bims.api_views.search import CollectionSearch
     from bims.models import BiologicalCollectionRecord
@@ -157,8 +172,6 @@ def download_collection_records(
     project_name = preferences.SiteSetting.project_name
 
     exclude_fields = []
-    headers = []
-    added_headers = set()
 
     if project_name.lower() == 'sanparks':
         exclude_fields = [
@@ -203,6 +216,9 @@ def download_collection_records(
     search = CollectionSearch(filters, user_id if user_id else None)
     collection_results = search.process_search()
     total_records = collection_results.count()
+    logger.debug(
+        'Found %d records in %.2fs', total_records, time.time() - start
+    )
 
     if not collection_results and site_results:
         site_ids = site_results.values_list('id', flat=True)
@@ -213,8 +229,7 @@ def download_collection_records(
     # Support resuming a partially completed download
     rows_already_written = count_csv_data_rows(path_file)
     current_csv_row = rows_already_written
-    record_number = min(total_records, 500)
-    collection_data = []
+    record_number = min(total_records, DOWNLOAD_BATCH_SIZE)
 
     if download_request and download_request.rejected:
         return
@@ -292,19 +307,24 @@ def download_collection_records(
             except (FileNotFoundError, UnicodeDecodeError, AttributeError, ValueError):
                 continue
 
-    def write_batch_to_csv(header, rows, _path_file, _start_index):
+    # Shared by every batch so lookups cached by the serializer (taxa,
+    # source references, datasets, constants) are only loaded once.
+    serializer_context = {
+        'header': [],
+        'exclude_fields': exclude_fields,
+        'upload_template_headers': upload_template_headers,
+        'added_headers': set(),
+    }
+
+    def write_batch_to_csv(rows, _path_file, _start_index):
+        prefetch_batch(rows, serializer_context)
         bio_serializer = BioCollectionOneRowSerializer(
             rows, many=True,
-            context={
-                'header': header,
-                'exclude_fields': exclude_fields,
-                'upload_template_headers': upload_template_headers,
-                'added_headers': added_headers,
-            }
+            context=serializer_context
         )
         bio_data = bio_serializer.data
 
-        header = bio_serializer.context['header']
+        header = serializer_context['header']
 
         present_cols = set()
         for r in bio_data:
@@ -317,6 +337,9 @@ def download_collection_records(
             if i != 1:
                 filtered_header.insert(1, filtered_header.pop(i))
 
+        # The next batch starts from this batch's written header.
+        serializer_context['header'] = filtered_header
+
         csv_row = write_to_csv(
             filtered_header,
             bio_data,
@@ -324,61 +347,55 @@ def download_collection_records(
             _start_index
         )
         del bio_serializer
-        return csv_row, filtered_header
+        return csv_row
 
-    for obj in queryset_iterator(collection_results, batch_size=record_number):
-        collection_data.append(obj)
-        if len(collection_data) >= record_number:
-            start_index = current_csv_row
-            current_csv_row, headers = write_batch_to_csv(
-                headers,
-                collection_data,
-                path_file,
-                current_csv_row
-            )
-
-            logger.debug('Serialize time {0}:{1}: {2}'.format(
-                start_index,
-                current_csv_row,
-                round(time.time() - start, 2))
-            )
-
-            del collection_data
-            collection_data = []
-
-            gc.collect()
-
-            download_request = get_download_request(download_request_id)
-
-            if download_request.rejected:
-                logger.debug('Download request is rejected, closing.')
-                try:
-                    os.remove(path_file)
-                except Exception: # noqa
-                    pass
-                return
-            else:
-                download_request.progress = f'{current_csv_row}/{total_records}'
-                download_request.progress_updated_at = timezone.now()
-                download_request.save()
-
-    if collection_data:
+    batch_started = time.time()
+    for collection_data in collection_record_batches(
+            collection_results, batch_size=record_number):
+        # The first fetch also includes running the search query.
+        fetched = time.time()
         start_index = current_csv_row
-        current_csv_row, headers = write_batch_to_csv(
-            headers,
+        current_csv_row = write_batch_to_csv(
             collection_data,
             path_file,
             current_csv_row
         )
-        logger.debug('Serialize time {0}:{1}: {2}'.format(
+        written = time.time()
+
+        logger.debug(
+            'Rows %d-%d of %d: batch %.2fs (fetch %.2fs, '
+            'serialize/write %.2fs, %.0f rows/s), elapsed %.2fs',
             start_index,
             current_csv_row,
-            round(time.time() - start, 2))
+            total_records,
+            written - batch_started,
+            fetched - batch_started,
+            written - fetched,
+            (current_csv_row - start_index) / max(written - batch_started, 1e-6),
+            written - start
         )
 
-    logger.debug('Serialize time : {}'.format(
-        round(time.time() - start, 2))
-    )
+        del collection_data
+        gc.collect()
+        batch_started = time.time()
+
+        download_request = get_download_request(download_request_id)
+        if not download_request:
+            continue
+
+        if download_request.rejected:
+            logger.debug('Download request is rejected, closing.')
+            try:
+                os.remove(path_file)
+            except Exception: # noqa
+                pass
+            return
+        else:
+            download_request.progress = f'{current_csv_row}/{total_records}'
+            download_request.progress_updated_at = timezone.now()
+            download_request.save(
+                update_fields=['progress', 'progress_updated_at']
+            )
 
     if download_request:
         download_request = get_download_request(download_request_id)
@@ -387,9 +404,7 @@ def download_collection_records(
         download_request.save()
 
     logger.debug(
-        'Write csv time : {}'.format(
-            round(time.time() - start, 2)
-        )
+        'Finished %d rows in %.2fs', current_csv_row, time.time() - start
     )
 
     if send_email and user_id:
