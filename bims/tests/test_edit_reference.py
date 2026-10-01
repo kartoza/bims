@@ -198,3 +198,57 @@ class TestEditReference(FastTenantTestCase):
             updated_reference.source.journal.name,
             post_dict['source']
         )
+
+    def _post_gbif_csv(self, csv_text, **extra):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        self.client.login(username='@.test', password='psst')
+        data = {
+            'title': 'updated bibliography',
+            'year': 2000,
+            'source': 'new journal name',
+            'gbif_metadata_csv': SimpleUploadedFile(
+                'meta.csv', csv_text.encode('utf-8'), content_type='text/csv'),
+        }
+        data.update(extra)
+        return self.client.post(
+            '/edit-source-reference/{}/'.format(self.source_reference.id),
+            data
+        )
+
+    def test_upload_gbif_metadata_csv(self):
+        from bims.utils.gbif_publish import load_publish_metadata
+        response = self._post_gbif_csv(
+            'project_identifier,title,description,license\n'
+            'BID-REG2025-094,GBIF title,GBIF description,CC BY 4.0\n')
+        self.assertEqual(response.status_code, 302)
+        source_reference = SourceReference.objects.get(
+            id=self.source_reference.id)
+        try:
+            metadata = load_publish_metadata(source_reference)
+            self.assertEqual(metadata['project_identifier'], 'BID-REG2025-094')
+            self.assertEqual(metadata['title'], 'GBIF title')
+        finally:
+            source_reference.gbif_metadata_file.delete()
+
+    def test_invalid_gbif_metadata_csv_changes_nothing(self):
+        response = self._post_gbif_csv(
+            'id,title,description\n999999,GBIF title,GBIF description\n')
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(
+            'GBIF metadata CSV not saved', response.content.decode())
+        self.source_reference.refresh_from_db()
+        self.assertFalse(self.source_reference.gbif_metadata_file)
+        self.assertNotEqual(self.source_reference.title, 'updated bibliography')
+
+    def test_remove_gbif_metadata(self):
+        from django.core.files.base import ContentFile
+        self.source_reference.gbif_metadata_file.save(
+            'meta.csv', ContentFile(b'title,description\nT,D\n'))
+        self.client.login(username='@.test', password='psst')
+        response = self.client.post(
+            '/edit-source-reference/{}/'.format(self.source_reference.id),
+            {'title': 'updated bibliography', 'year': 2000,
+             'source': 'new journal name', 'remove_gbif_metadata': '1'})
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(SourceReference.objects.get(
+            id=self.source_reference.id).gbif_metadata_file)

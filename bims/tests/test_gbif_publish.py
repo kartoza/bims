@@ -8,7 +8,7 @@ import zipfile as zf
 from unittest import mock
 
 from django.db import connection
-from django.test import override_settings
+from django.test import SimpleTestCase, override_settings
 from django.utils import timezone
 from django_tenants.test.cases import FastTenantTestCase
 from django_tenants.utils import schema_context, get_public_schema_name
@@ -1608,3 +1608,174 @@ class GbifPublishEmlCreatorTests(FastTenantTestCase):
         eml = self._read_eml(zip_path)
         self.assertLess(eml.index("First"), eml.index("Second"),
                         "First originator contact should appear before Second in EML")
+
+
+class GbifMetadataCsvParsingTests(SimpleTestCase):
+    HEADER = (
+        "id,project_identifier,title,description,license,taxonomic_coverage,"
+        "geographic_description,temporal_start,temporal_end,"
+        "sampling_description,purpose\n"
+    )
+    ROW_1 = (
+        '1234,BID-REG2025-094,Fish surveys,"First paragraph.\n\nSecond.",CC BY 4.0,'
+        "Fishes to species,Tana River Basin,2018-03-15,2022-11-30,Seine nets,"
+        "To assess fish\n"
+    )
+    ROW_2 = "99,,Other,Desc,CC0 1.0,,,,,,\n"
+
+    def _parse(self, text, *args, **kwargs):
+        import io
+        from bims.utils.gbif_metadata import parse_metadata_file
+        return parse_metadata_file(
+            io.BytesIO(text.encode("utf-8")), *args, **kwargs)
+
+    def test_selects_row_by_source_reference_id(self):
+        row = self._parse(self.HEADER + self.ROW_1 + self.ROW_2, 99)
+        self.assertEqual(row["title"], "Other")
+        row = self._parse(self.HEADER + self.ROW_1 + self.ROW_2, 1234)
+        self.assertEqual(row["project_identifier"], "BID-REG2025-094")
+
+    def test_missing_id_row_is_rejected(self):
+        with self.assertRaises(ValueError):
+            self._parse(self.HEADER + self.ROW_1 + self.ROW_2, 5)
+
+    def test_single_row_without_id_is_accepted(self):
+        row = self._parse(self.HEADER + ",,Only,Desc,,,,,,,\n", 5)
+        self.assertEqual(row["title"], "Only")
+
+    def test_id_column_is_optional(self):
+        text = "title,description\nOnly,Desc\n"
+        self.assertEqual(self._parse(text, 5)["title"], "Only")
+
+    def test_single_row_with_other_id_is_rejected(self):
+        with self.assertRaises(ValueError) as ctx:
+            self._parse(self.HEADER + self.ROW_1, 5)
+        self.assertIn("does not match", str(ctx.exception))
+
+    def test_validation_errors(self):
+        bad = "7,,,Desc,GPL,,,2022-01-02,2021-01-01,,\n"
+        with self.assertRaises(ValueError) as ctx:
+            self._parse(self.HEADER + bad, 7)
+        msg = str(ctx.exception)
+        self.assertIn("title must not be empty", msg)
+        self.assertIn("license", msg)
+        self.assertIn("temporal_end", msg)
+
+    def test_duplicate_ids_rejected(self):
+        with self.assertRaises(ValueError):
+            self._parse(self.HEADER + self.ROW_1 + self.ROW_1, 1234)
+
+    def test_other_rows_only_validated_when_requested(self):
+        bad_other = "55,,,,,,,,,,\n"
+        text = self.HEADER + self.ROW_1 + bad_other
+        self.assertEqual(self._parse(text, 1234)["id"], "1234")
+        with self.assertRaises(ValueError):
+            self._parse(text, 1234, validate_all=True)
+
+    def test_semicolon_delimiter_bom_and_licence_case(self):
+        text = "\ufeff" + (self.HEADER + "99,,Other,Desc,cc0 1.0,,,,,,\n").replace(",", ";")
+        self.assertEqual(self._parse(text, 99)["license"], "CC0 1.0")
+
+    def test_eml_contains_metadata(self):
+        import os
+        import tempfile
+        import xml.etree.ElementTree as ET
+        from bims.utils.gbif_publish import write_eml_xml
+
+        row = self._parse(self.HEADER + self.ROW_1, 1234)
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "eml.xml")
+            write_eml_xml(
+                path, row["title"], "generic", [], metadata=row,
+                bbox=(30.0, 31.0, -1.0, -2.0))
+            dataset = ET.parse(path).getroot().find("dataset")
+        self.assertEqual(
+            [p.text for p in dataset.findall("abstract/para")],
+            ["First paragraph.", "Second."])
+        self.assertIn("CC BY 4.0", dataset.find("intellectualRights/para").text)
+        self.assertEqual(
+            dataset.find("coverage/geographicCoverage/geographicDescription").text,
+            "Tana River Basin")
+        self.assertEqual(
+            dataset.find("coverage/temporalCoverage/rangeOfDates/endDate/calendarDate").text,
+            "2022-11-30")
+        self.assertEqual(
+            dataset.find("coverage/taxonomicCoverage/generalTaxonomicCoverage").text,
+            "Fishes to species")
+        self.assertEqual(dataset.find("purpose/para").text, "To assess fish")
+        self.assertEqual(
+            dataset.find("methods/sampling/samplingDescription/para").text,
+            "Seine nets")
+        self.assertEqual(dataset.find("project").get("id"), "BID-REG2025-094")
+        tags = [c.tag for c in dataset]
+        self.assertLess(tags.index("abstract"), tags.index("intellectualRights"))
+        self.assertLess(tags.index("intellectualRights"), tags.index("coverage"))
+        self.assertLess(tags.index("coverage"), tags.index("purpose"))
+        self.assertLess(tags.index("purpose"), tags.index("methods"))
+        self.assertLess(tags.index("methods"), tags.index("project"))
+
+    def test_eml_without_metadata_keeps_generic_abstract(self):
+        import os
+        import tempfile
+        import xml.etree.ElementTree as ET
+        from bims.utils.gbif_publish import write_eml_xml
+
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "eml.xml")
+            write_eml_xml(path, "T", "generic abstract", [])
+            dataset = ET.parse(path).getroot().find("dataset")
+        self.assertEqual(dataset.find("abstract/para").text, "generic abstract")
+        self.assertIsNone(dataset.find("project"))
+        self.assertIsNone(dataset.find("coverage"))
+
+
+class GbifMetadataLoadTests(FastTenantTestCase):
+    HEADER = GbifMetadataCsvParsingTests.HEADER
+
+    def test_load_publish_metadata(self):
+        from django.core.files.base import ContentFile
+        from bims.utils.gbif_publish import load_publish_metadata
+        sr = SourceReferenceF.create()
+        self.assertEqual(load_publish_metadata(sr), {})
+        self.assertEqual(load_publish_metadata(None), {})
+        sr.gbif_metadata_file.save("meta.csv", ContentFile(
+            (self.HEADER + f"{sr.pk},BID-REG2025-094,T,D,CC BY 4.0,,,,,,\n").encode()))
+        try:
+            self.assertEqual(
+                load_publish_metadata(sr)["project_identifier"], "BID-REG2025-094")
+        finally:
+            sr.gbif_metadata_file.delete()
+
+
+class GbifMetadataAdminFormTests(FastTenantTestCase):
+    HEADER = GbifMetadataCsvParsingTests.HEADER
+
+    def _form(self, sr, csv_text, name="meta.csv"):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from django.forms import modelform_factory
+        from bims.custom_admin.source_reference import GbifMetadataCsvAdminForm
+        from bims.models.source_reference import SourceReference
+        form_class = modelform_factory(
+            SourceReference, form=GbifMetadataCsvAdminForm,
+            fields=("gbif_metadata_file",))
+        return form_class(
+            data={}, instance=sr,
+            files={"gbif_metadata_file": SimpleUploadedFile(
+                name, csv_text.encode("utf-8"), content_type="text/csv")})
+
+    def test_valid_csv_accepted(self):
+        sr = SourceReferenceF.create()
+        form = self._form(sr, self.HEADER + f"{sr.pk},,T,D,CC BY 4.0,,,,,,\n")
+        self.assertTrue(form.is_valid(), form.errors)
+
+    def test_invalid_csv_rejected(self):
+        sr = SourceReferenceF.create()
+        form = self._form(sr, self.HEADER + f"{sr.pk},,,D,GPL,,,,,,\n")
+        self.assertFalse(form.is_valid())
+        self.assertIn("gbif_metadata_file", form.errors)
+
+    def test_non_csv_rejected(self):
+        sr = SourceReferenceF.create()
+        form = self._form(sr, "title,description\nT,D\n", name="meta.pdf")
+        self.assertFalse(form.is_valid())
+        self.assertIn("gbif_metadata_file", form.errors)

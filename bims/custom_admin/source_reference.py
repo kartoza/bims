@@ -6,6 +6,8 @@ from polymorphic.admin import (
     PolymorphicParentModelAdmin,
     PolymorphicChildModelAdmin,
     PolymorphicChildModelFilter)
+from django import forms
+from django.core.files.uploadedfile import UploadedFile
 from bims.models.source_reference import (
     DatabaseRecord,
     SourceReference,
@@ -58,10 +60,27 @@ class DatabaseRecordAdmin(admin.ModelAdmin):
     list_display = ('name', 'url')
 
 
+class GbifMetadataCsvAdminForm(forms.ModelForm):
+    """Validates an uploaded GBIF metadata CSV before it is saved."""
+
+    def clean_gbif_metadata_file(self):
+        f = self.cleaned_data.get('gbif_metadata_file')
+        if isinstance(f, UploadedFile):
+            from bims.utils.gbif_metadata import parse_metadata_file
+            try:
+                parse_metadata_file(f, self.instance.pk)
+            except ValueError as e:
+                raise forms.ValidationError(str(e))
+            finally:
+                f.seek(0)
+        return f
+
+
 class SourceReferenceBibliographyAdmin(PolymorphicChildModelAdmin):
     list_display = ('source', 'note', 'has_metadata')
     base_model = SourceReferenceBibliography
-    fields = ('source', 'document', 'note', 'source_name', 'verified', 'mobile', 'publish_to_gbif', 'metadata_file')
+    base_form = GbifMetadataCsvAdminForm
+    fields = ('source', 'document', 'note', 'source_name', 'verified', 'mobile', 'publish_to_gbif', 'metadata_file', 'gbif_metadata_file')
 
     def has_metadata(self, obj):
         return 'Yes' if obj.metadata_file else 'No'
@@ -71,7 +90,8 @@ class SourceReferenceBibliographyAdmin(PolymorphicChildModelAdmin):
 class SourceReferenceDatabaseAdmin(PolymorphicChildModelAdmin):
     list_display = ('source', 'note', 'has_metadata')
     base_model = SourceReferenceDatabase
-    fields = ('source', 'document', 'note', 'source_name', 'verified', 'mobile', 'publish_to_gbif', 'metadata_file')
+    base_form = GbifMetadataCsvAdminForm
+    fields = ('source', 'document', 'note', 'source_name', 'verified', 'mobile', 'publish_to_gbif', 'metadata_file', 'gbif_metadata_file')
 
     def has_metadata(self, obj):
         return 'Yes' if obj.metadata_file else 'No'
@@ -81,7 +101,8 @@ class SourceReferenceDatabaseAdmin(PolymorphicChildModelAdmin):
 class SourceReferenceDocumentAdmin(PolymorphicChildModelAdmin):
     list_display = ('source', 'note', 'has_metadata')
     base_model = SourceReferenceDocument
-    fields = ('source', 'note', 'source_name', 'verified', 'mobile', 'publish_to_gbif', 'metadata_file')
+    base_form = GbifMetadataCsvAdminForm
+    fields = ('source', 'note', 'source_name', 'verified', 'mobile', 'publish_to_gbif', 'metadata_file', 'gbif_metadata_file')
 
     def has_metadata(self, obj):
         return 'Yes' if obj.metadata_file else 'No'
@@ -93,10 +114,12 @@ class SourceReferenceAdmin(PolymorphicParentModelAdmin):
     base_model = SourceReference
     list_display = (
         'source_reference_title',
+        'id',
         'reference_type',
         'verified',
         'total_records',
         'has_metadata',
+        'has_gbif_metadata',
         'has_gbif_publish',
         'publish_to_gbif',
     )
@@ -152,6 +175,10 @@ class SourceReferenceAdmin(PolymorphicParentModelAdmin):
     def has_metadata(self, obj):
         return 'Yes' if obj.metadata_file else 'No'
 
+    def has_gbif_metadata(self, obj):
+        return bool(obj.gbif_metadata_file)
+    has_gbif_metadata.boolean = True
+
     def has_gbif_publish(self, obj):
         from bims.models.gbif_publish import GbifPublish
         return GbifPublish.objects.filter(source_reference=obj).exists()
@@ -165,6 +192,7 @@ class SourceReferenceAdmin(PolymorphicParentModelAdmin):
     reference_type.short_description = 'Reference Type'
     total_records.short_description = 'Total Occurrences'
     has_metadata.short_description = 'Has Metadata'
+    has_gbif_metadata.short_description = 'GBIF Metadata'
     has_gbif_publish.short_description = 'GBIF Publish Schedule'
     publish_to_gbif.short_description = 'Publish to GBIF'
 

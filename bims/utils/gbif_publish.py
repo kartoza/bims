@@ -3,6 +3,7 @@ import csv
 import os
 import zipfile
 import uuid
+from types import SimpleNamespace
 from datetime import datetime
 from typing import Iterable, Tuple, List
 from xml.sax.saxutils import escape as _xe
@@ -15,6 +16,7 @@ from django.utils.timezone import now
 from requests.auth import HTTPBasicAuth
 
 from bims.models.biological_collection_record import BiologicalCollectionRecord
+from bims.utils.gbif_metadata import METADATA_LICENCES, parse_metadata_file
 
 LICENSE_URL = "https://creativecommons.org/licenses/by/4.0/legalcode"
 
@@ -416,6 +418,74 @@ def intellectual_rights_text(licence=None) -> str:
     return f"This work is licensed under a {_xe(name)} {_xe(url)}."
 
 
+def _paras(text: str) -> str:
+    """Render free text as EML <para> elements, one per paragraph."""
+    parts = [p.strip() for p in (text or "").replace("\r\n", "\n").split("\n\n")]
+    return "".join(f"<para>{_xe(p)}</para>" for p in parts if p)
+
+
+def _eml_coverage(metadata: dict, bbox=None) -> str:
+    geographic = ""
+    if metadata.get("geographic_description") and bbox:
+        west, east, north, south = bbox
+        geographic = (
+            "<geographicCoverage>"
+            f"<geographicDescription>{_xe(metadata['geographic_description'])}</geographicDescription>"
+            "<boundingCoordinates>"
+            f"<westBoundingCoordinate>{west}</westBoundingCoordinate>"
+            f"<eastBoundingCoordinate>{east}</eastBoundingCoordinate>"
+            f"<northBoundingCoordinate>{north}</northBoundingCoordinate>"
+            f"<southBoundingCoordinate>{south}</southBoundingCoordinate>"
+            "</boundingCoordinates></geographicCoverage>"
+        )
+    start, end = metadata.get("temporal_start"), metadata.get("temporal_end")
+    temporal = ""
+    if start and end:
+        temporal = (
+            "<temporalCoverage><rangeOfDates>"
+            f"<beginDate><calendarDate>{start}</calendarDate></beginDate>"
+            f"<endDate><calendarDate>{end}</calendarDate></endDate>"
+            "</rangeOfDates></temporalCoverage>"
+        )
+    elif start or end:
+        temporal = (
+            "<temporalCoverage><singleDateTime>"
+            f"<calendarDate>{start or end}</calendarDate>"
+            "</singleDateTime></temporalCoverage>"
+        )
+    taxonomic = ""
+    if metadata.get("taxonomic_coverage"):
+        taxonomic = (
+            "<taxonomicCoverage><generalTaxonomicCoverage>"
+            f"{_xe(metadata['taxonomic_coverage'])}"
+            "</generalTaxonomicCoverage></taxonomicCoverage>"
+        )
+    inner = geographic + temporal + taxonomic
+    return f"<coverage>{inner}</coverage>" if inner else ""
+
+
+def _eml_methods(metadata: dict) -> str:
+    sampling = metadata.get("sampling_description")
+    if not sampling:
+        return ""
+    extent = metadata.get("geographic_description") or "See geographic coverage."
+    return (
+        "<methods>"
+        f"<methodStep><description>{_paras(sampling)}</description></methodStep>"
+        "<sampling>"
+        f"<studyExtent><description><para>{_xe(extent)}</para></description></studyExtent>"
+        f"<samplingDescription>{_paras(sampling)}</samplingDescription>"
+        "</sampling></methods>"
+    )
+
+
+def _eml_project(project_identifier: str) -> str:
+    pid = (project_identifier or "").strip()
+    if not pid:
+        return ""
+    return f'<project id="{_xe(pid, {chr(34): "&quot;"})}"><title>{_xe(pid)}</title></project>'
+
+
 def write_eml_xml(
         path: str,
         title: str,
@@ -423,7 +493,24 @@ def write_eml_xml(
         contacts: list,
         licences: list = None,
         citation: str = "",
-        pub_date: str = ""):
+        pub_date: str = "",
+        metadata: dict = None,
+        bbox=None):
+    metadata = metadata or {}
+    abstract_xml = (
+        f"<abstract>{_paras(metadata['description'])}</abstract>"
+        if metadata.get("description")
+        else f"<abstract><para>{_xe(abstract)}</para></abstract>"
+    )
+    coverage_xml = _eml_coverage(metadata, bbox)
+    purpose_xml = (
+        f"<purpose>{_paras(metadata['purpose'])}</purpose>"
+        if metadata.get("purpose") else "")
+    methods_xml = _eml_methods(metadata)
+    project_xml = _eml_project(metadata.get("project_identifier"))
+    if metadata.get("license"):
+        name, url = METADATA_LICENCES[metadata["license"].lower()]
+        licences = [SimpleNamespace(name=name, url=url)]
     today = datetime.utcnow().date().isoformat()
     pub_date = pub_date or today
     site = _site_name()
@@ -474,11 +561,15 @@ def write_eml_xml(
             <title>{_xe(title)}</title>
             {creator_blocks}
             <pubDate>{pub_date}</pubDate>
-            <abstract><para>{_xe(abstract)}</para></abstract>
+            {abstract_xml}
             <intellectualRights>
 {rights_paras}
             </intellectualRights>
+            {coverage_xml}
+            {purpose_xml}
             {contact_blocks}
+            {methods_xml}
+            {project_xml}
           </dataset>{additional_metadata}
         </eml:eml>
         """
@@ -513,6 +604,8 @@ def register_dataset(
     config,
     title: str,
     description: str,
+    project_identifier: str = "",
+    license_url: str = "",
 ) -> str:
     """Register a dataset on GBIF using config credentials."""
     if not config.publishing_org_key or not config.installation_key:
@@ -525,8 +618,12 @@ def register_dataset(
         "title": title,
         "description": description,
         "language": "eng",
-        "license": config.license.url if config.license_id and config.license.url else LICENSE_URL,
+        "license": license_url or (
+            config.license.url if config.license_id and config.license.url else LICENSE_URL),
     }
+
+    if project_identifier:
+        payload["project"] = {"identifier": project_identifier}
 
     auth = HTTPBasicAuth(config.username, config.password)
     api_url = config.gbif_api_url.rstrip("/")
@@ -591,12 +688,43 @@ def archive_url_dir(archive_url: str) -> str:
     return os.path.dirname(os.path.join(settings.MEDIA_ROOT, rel))
 
 
+def load_publish_metadata(source_reference) -> dict:
+    """Return the row of the source reference's GBIF metadata CSV, or {}.
+
+    Raises ValueError when the uploaded CSV is not usable.
+    """
+    metadata_file = getattr(source_reference, "gbif_metadata_file", None)
+    if not metadata_file:
+        return {}
+    metadata_file.open("rb")
+    try:
+        return parse_metadata_file(metadata_file, source_reference.pk)
+    finally:
+        metadata_file.close()
+
+
+def _records_bbox(records):
+    """Return (west, east, north, south) of the records' sites, or None."""
+    lats, lons = [], []
+    for r in records:
+        try:
+            lat, lon = float(r.site.latitude), float(r.site.longitude)
+        except (AttributeError, TypeError, ValueError):
+            continue
+        lats.append(lat)
+        lons.append(lon)
+    if not lats:
+        return None
+    return min(lons), max(lons), max(lats), min(lats)
+
+
 def build_dwca(
     config,
     records: Iterable[BiologicalCollectionRecord],
     contacts: list,
     source_reference=None,
     out_dir: str = None,
+    metadata: dict = None,
 ) -> Tuple[str, str, List[int]]:
     """Build DwC-A using config for base URL.
     """
@@ -614,7 +742,8 @@ def build_dwca(
     if not written_ids:
         raise ValueError("No eligible records to export.")
 
-    title = ref_title
+    metadata = metadata or {}
+    title = metadata.get("title") or ref_title
     publisher_name = get_publisher_name(config) or getattr(config, 'name', None) or _site_name()
     abstract = (
         f"Occurrence dataset for {ref_title} uploaded to {publisher_name}."
@@ -650,7 +779,9 @@ def build_dwca(
         contacts=contacts,
         licences=licences,
         citation=citation,
-        pub_date=pub_date)
+        pub_date=pub_date,
+        metadata=metadata,
+        bbox=_records_bbox(records))
     zip_path = zip_dwca(out_dir)
 
     domain_name = get_domain_name()
@@ -848,10 +979,13 @@ def publish_gbif_data_with_config(
     if not records:
         raise ValueError("No records to publish (need public+validated).")
 
+    metadata = load_publish_metadata(source_reference)
+
     out_dir = archive_url_dir(existing_archive_url) if existing_archive_url else None
 
     zip_path, archive_url, written_ids = build_dwca(
         config, records, contacts, source_reference, out_dir=out_dir,
+        metadata=metadata,
     )
 
     ref_title = source_reference.title if source_reference else _site_name()
@@ -866,7 +1000,13 @@ def publish_gbif_data_with_config(
         description = (
             f"Occurrence dataset for {ref_title} uploaded to {publisher_name}."
         )
-        dataset_key = register_dataset(config, title, description)
+        title = metadata.get("title") or title
+        description = metadata.get("description") or description
+        licence = METADATA_LICENCES.get((metadata.get("license") or "").lower())
+        dataset_key = register_dataset(
+            config, title, description,
+            project_identifier=metadata.get("project_identifier", ""),
+            license_url=licence[1] if licence else "")
         add_endpoint(config, dataset_key, archive_url)
         sync_dataset_contacts(config, dataset_key, contacts)
 
