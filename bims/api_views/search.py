@@ -867,7 +867,8 @@ class CollectionSearch(object):
             Q(owner_id=requester_id) |
             Q(
                 Q(end_embargo_date__lte=datetime.date.today()) |
-                Q(end_embargo_date__isnull=True)
+                Q(end_embargo_date__isnull=True) |
+                Q(start_embargo_date__gt=datetime.date.today())
             )
         )
 

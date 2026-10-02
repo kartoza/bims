@@ -450,6 +450,16 @@ class BiologicalCollectionRecord(AbstractValidation):
         null=True
     )
 
+    start_embargo_date = models.DateField(
+        null=True,
+        blank=True,
+        help_text=(
+            'The date when the embargo on the data starts. Together with '
+            'the end embargo date, the data is only visible to its owner '
+            'between these dates.'
+        ),
+    )
+
     data_type = models.CharField(
         max_length=128,
         blank=True,

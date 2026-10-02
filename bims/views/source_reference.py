@@ -10,13 +10,22 @@ from django.urls import reverse
 from django.http import HttpResponseRedirect, JsonResponse
 from django.http import Http404
 from django.contrib import messages
+from django.core.exceptions import ValidationError
 from django.contrib.auth.mixins import UserPassesTestMixin
+from django_tenants.utils import get_tenant
 from geonode.base.models import HierarchicalKeyword, TaggedContentItem
 from rest_framework.generics import ListAPIView
 from rest_framework.pagination import PageNumberPagination
 from urllib.parse import unquote
 
 
+from bims.api_views.reference import (
+    can_update_data_type,
+    data_type_records,
+    embargo_dates,
+    records_needing_data_type
+)
+from bims.utils.search_process import clear_finished_search_in_background
 from bims.utils.user import get_user_from_name
 from bims.models.source_reference import (
     SourceReference,
@@ -630,8 +639,57 @@ class EditSourceReferenceView(UserPassesTestMixin, UpdateView):
             ).update(source_reference=source_reference)
             source_references.exclude(id=source_reference.id).delete()
 
+    def get_data_type_update(self, post_dict):
+        """Return a (records, new_data_type, embargo_fields) tuple with the
+        records of this source reference to update, the new data type (or
+        None) and the embargo field values to set (or an empty dict).
+        Returns None when no data type or embargo change is posted.
+        Raises ValidationError."""
+        new_data_type = post_dict.get('new_data_type') or None
+        remove_embargo = post_dict.get('remove_embargo')
+        start_date, end_date = (
+            (None, None) if remove_embargo else embargo_dates(post_dict)
+        )
+        if not (new_data_type or remove_embargo or end_date):
+            return None
+        if not can_update_data_type(self.request.user):
+            raise ValidationError(
+                'You do not have permission to update the data type.')
+
+        if new_data_type:
+            valid_data_types = [
+                choice[0] for choice in
+                BiologicalCollectionRecord.DATA_TYPE_CHOICES
+            ]
+            if new_data_type not in valid_data_types:
+                raise ValidationError(f'Invalid data type: {new_data_type}')
+        embargo_fields = {}
+        if remove_embargo:
+            embargo_fields = {
+                'start_embargo_date': None,
+                'end_embargo_date': None
+            }
+        elif end_date:
+            embargo_fields = {
+                'start_embargo_date': start_date,
+                'end_embargo_date': end_date
+            }
+        return (
+            data_type_records(self.object, post_dict),
+            new_data_type,
+            embargo_fields
+        )
+
     def form_valid(self, form):
         post_dict = self.request.POST.dict()
+        try:
+            data_type_update = self.get_data_type_update(post_dict)
+        except ValidationError as e:
+            messages.error(
+                self.request, e.message,
+                extra_tags='source-reference-data-type')
+            return HttpResponseRedirect(self.request.get_full_path())
+
         if self.object.is_published_report():
             self.update_published_report_reference(
                 post_dict
@@ -660,6 +718,37 @@ class EditSourceReferenceView(UserPassesTestMixin, UpdateView):
             self.object.metadata_file = metadata_file
         self.object.save()
 
+        if data_type_update:
+            records, new_data_type, embargo_fields = data_type_update
+            changes = []
+            # Update the embargo first, the records may be filtered by
+            # their current data type
+            if embargo_fields:
+                updated = records.update(**embargo_fields)
+                end_date = embargo_fields['end_embargo_date']
+                if end_date:
+                    start_date = embargo_fields['start_embargo_date']
+                    changes.append(
+                        f'embargo set on {updated} record(s) ' +
+                        (f'from {start_date:%d/%m/%Y} '
+                         if start_date else '') +
+                        f'until {end_date:%d/%m/%Y}')
+                else:
+                    changes.append(
+                        f'embargo removed from {updated} record(s)')
+            if new_data_type:
+                updated = records_needing_data_type(
+                    records, new_data_type
+                ).update(data_type=new_data_type)
+                changes.insert(
+                    0, f'{updated} record(s) set to {new_data_type}')
+            # Cached search results may contain the updated records
+            clear_finished_search_in_background(get_tenant(self.request))
+            messages.success(
+                self.request,
+                f'Records updated: {"; ".join(changes)}.',
+                extra_tags='source-reference-data-type')
+
         return super(EditSourceReferenceView, self).form_valid(
             form
         )
@@ -668,6 +757,17 @@ class EditSourceReferenceView(UserPassesTestMixin, UpdateView):
         context = super(
             EditSourceReferenceView, self).get_context_data(**kwargs)
         context['past_url'] = self.request.GET.get('next')
+        context['can_update_data_type'] = can_update_data_type(
+            self.request.user)
+        if context['can_update_data_type']:
+            context['total_records'] = (
+                BiologicalCollectionRecord.objects.filter(
+                    source_reference=self.object
+                ).count()
+            )
+            context['data_type_choices'] = (
+                BiologicalCollectionRecord.DATA_TYPE_CHOICES
+            )
         if self.object.is_published_report():
             try:
                 context['source_name'] = json.loads(

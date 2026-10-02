@@ -92,6 +92,11 @@
             </div>
             <div class="col-lg-9 col-md-8 col-xs-12">
                 {% if user.is_authenticated %}
+                    {% for message in messages %}
+                        {% if 'source-reference-data-type' in message.tags %}
+                            <div class="alert {% if message.level_tag == 'error' %}alert-danger{% else %}alert-success{% endif %}">{{ message }}</div>
+                        {% endif %}
+                    {% endfor %}
                     <a href="/add-source-reference/" class="btn btn-info" style="margin-bottom: 10px"><i class="fa fa-plus"></i>&nbsp Add Source Reference</a>
                 {% endif %}
                 {% for source_reference in object_list %}

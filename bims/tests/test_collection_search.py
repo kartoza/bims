@@ -297,6 +297,26 @@ class TestCollectionSearch(TestCase):
                 1
             )
 
+    def test_search_embargo_start_date(self):
+        # Embargo has not started yet, record is visible
+        BiologicalCollectionRecordF.create(
+            original_species_name='test98',
+            taxonomy=self.taxa,
+            site=self.site,
+            start_embargo_date=datetime.now() + relativedelta(months=1),
+            end_embargo_date=datetime.now() + relativedelta(months=2)
+        )
+        # Embargo is active, record is hidden
+        BiologicalCollectionRecordF.create(
+            original_species_name='test98',
+            taxonomy=self.taxa,
+            site=self.site2,
+            start_embargo_date=datetime.now() - relativedelta(months=1),
+            end_embargo_date=datetime.now() + relativedelta(months=1)
+        )
+        search = CollectionSearch({'search': 'test98'})
+        self.assertEqual(search.process_search().count(), 1)
+
 
 class TestMetagroupSearch(TestCase):
 
