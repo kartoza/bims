@@ -1,6 +1,7 @@
 import json
 from datetime import date
 from decimal import Decimal
+from unittest import mock
 from unittest.mock import MagicMock
 
 from django.contrib.auth import get_user_model
@@ -11,15 +12,19 @@ from django.urls import reverse
 from django_tenants.test.cases import FastTenantTestCase
 from django_tenants.test.client import TenantClient
 
+from bims.models.location_site import LocationSite
 from bims.models.search_process import SearchProcess, SEARCH_RESULTS
 from bims.models.upload_session import UploadSession
 from bims.tests.model_factories import (
     LocationSiteF,
+    LocationTypeF,
     LocationContextF,
     LocationContextGroupF,
 )
 from climate.models import Climate
 from climate.scripts.climate_upload import ClimateCSVUpload
+from climate.admin import ClimateCountCollector
+from climate.tasks.climate_station_delete import delete_climate_stations
 from climate.views import (
     _build_daily_records,
     _build_monthly_records,
@@ -1039,3 +1044,157 @@ class ClimateMissingValueTests(FastTenantTestCase):
 
         self.assertEqual(zero_record['avg_temperature'], 0.0)
         self.assertEqual(zero_record['daily_rainfall'], 0.0)
+
+
+class ClimateStationDeleteTests(FastTenantTestCase):
+    """Tests for deleting climate stations in the background."""
+
+    def setUp(self):
+        self.client = TenantClient(self.tenant)
+        self.superuser = get_user_model().objects.create_superuser(
+            username='climate_admin',
+            email='climate_admin@example.com',
+            password='password'
+        )
+        self.client.login(username='climate_admin', password='password')
+        self.station = LocationSiteF.create(
+            site_code='DELETE001', name='Station to delete')
+        self.other_station = LocationSiteF.create(
+            site_code='KEEP001', name='Station to keep')
+        for station in (self.station, self.other_station):
+            for day in range(1, 6):
+                Climate.objects.create(
+                    location_site=station,
+                    date=date(2024, 1, day),
+                    year=2024, month=1, day=day,
+                    avg_temperature=20.0
+                )
+        self.delete_url = reverse(
+            'admin:climate_climatestation_delete', args=[self.station.pk])
+        self.changelist_url = reverse(
+            'admin:climate_climatestation_changelist')
+
+    def test_delete_confirmation_counts_climate_data(self):
+        response = self.client.get(self.delete_url)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response, 'Climate Data: 5 record(s), deleted in the background')
+        # Climate records are not listed one by one
+        self.assertNotContains(response, 'Station to delete - 2024-01-01')
+
+    def test_delete_summary_does_not_load_climate_data(self):
+        collector = ClimateCountCollector(using='default')
+        collector.collect([self.station])
+        self.assertNotIn(Climate, collector.model_objs)
+        self.assertEqual(
+            sum(qs.count() for qs in collector.fast_deletes
+                if qs.model is Climate),
+            5)
+
+    def test_change_page_has_delete_dialog(self):
+        response = self.client.get(reverse(
+            'admin:climate_climatestation_change', args=[self.station.pk]))
+        self.assertEqual(response.status_code, 200)
+        dialog = response.context['delete_dialog']
+        self.assertEqual(dialog['url'], self.delete_url)
+        self.assertIn('5 Climate Data', dialog['related'])
+        self.assertContains(response, 'id="climate-station-delete-dialog"')
+
+    @mock.patch('climate.admin.delete_climate_stations.delay')
+    def test_delete_view_runs_in_background(self, mock_delay):
+        response = self.client.post(self.delete_url, {'post': 'yes'})
+        self.assertRedirects(
+            response, self.changelist_url, fetch_redirect_response=False)
+        mock_delay.assert_called_once_with([self.station.pk])
+        self.assertTrue(
+            LocationSite.objects.filter(pk=self.station.pk).exists())
+        self.assertEqual(
+            Climate.objects.filter(location_site=self.station).count(), 5)
+
+    def test_delete_selected_confirmation_counts_climate_data(self):
+        response = self.client.post(self.changelist_url, {
+            'action': 'delete_selected',
+            '_selected_action': [self.station.pk, self.other_station.pk],
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response, 'Climate Data: 10 record(s), deleted in the background')
+
+    @mock.patch('climate.admin.delete_climate_stations.delay')
+    def test_delete_selected_runs_in_background(self, mock_delay):
+        response = self.client.post(self.changelist_url, {
+            'action': 'delete_selected',
+            '_selected_action': [self.station.pk],
+            'post': 'yes',
+        }, follow=True)
+        mock_delay.assert_called_once_with([self.station.pk])
+        self.assertTrue(
+            LocationSite.objects.filter(pk=self.station.pk).exists())
+        messages = [str(m) for m in response.context['messages']]
+        self.assertTrue(
+            any('in the background' in m for m in messages), messages)
+        self.assertFalse(
+            any('Successfully deleted' in m for m in messages), messages)
+
+    @mock.patch('climate.tasks.climate_station_delete.BATCH_SIZE', 2)
+    def test_task_deletes_station_and_climate_data(self):
+        results = delete_climate_stations([self.station.pk])
+        self.assertEqual(results, {str(self.station): 5})
+        self.assertFalse(
+            LocationSite.objects.filter(pk=self.station.pk).exists())
+        self.assertFalse(
+            Climate.objects.filter(location_site_id=self.station.pk).exists())
+        self.assertEqual(
+            Climate.objects.filter(location_site=self.other_station).count(),
+            5)
+
+    def test_task_ignores_missing_station(self):
+        self.assertEqual(delete_climate_stations([0]), {})
+
+
+class ClimateStationChangelistTests(FastTenantTestCase):
+    """Tests for the climate station admin list."""
+
+    def setUp(self):
+        self.client = TenantClient(self.tenant)
+        get_user_model().objects.create_superuser(
+            username='climate_admin',
+            email='climate_admin@example.com',
+            password='password'
+        )
+        self.client.login(username='climate_admin', password='password')
+        self.station_with_data = LocationSiteF.create(
+            site_code='DATA001', name='Station with data')
+        for day in range(1, 4):
+            Climate.objects.create(
+                location_site=self.station_with_data,
+                date=date(2024, 1, day),
+                year=2024, month=1, day=day
+            )
+        self.weather_station = LocationSiteF.create(
+            site_code='WS001', name='Empty weather station',
+            location_type=LocationTypeF.create(name='Weather Station'))
+        self.other_site = LocationSiteF.create(
+            site_code='OTHER001', name='Not a station')
+
+    def test_lists_stations_with_record_count(self):
+        response = self.client.get(
+            reverse('admin:climate_climatestation_changelist'))
+        self.assertEqual(response.status_code, 200)
+        stations = {
+            station.pk: station.climate_record_total
+            for station in response.context['cl'].result_list
+        }
+        self.assertEqual(stations, {
+            self.station_with_data.pk: 3,
+            self.weather_station.pk: 0,
+        })
+
+    def test_order_by_record_count(self):
+        response = self.client.get(
+            reverse('admin:climate_climatestation_changelist'),
+            {'o': '-5'})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            [station.pk for station in response.context['cl'].result_list],
+            [self.station_with_data.pk, self.weather_station.pk])

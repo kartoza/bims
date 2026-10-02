@@ -1,0 +1,41 @@
+{% extends "admin/change_form.html" %}
+
+{% block submit_buttons_bottom %}
+{{ block.super }}
+{% if delete_dialog %}
+{{ delete_dialog|json_script:"climate-station-delete-dialog" }}
+<script>
+    (function () {
+        const deleteLink = document.querySelector('.grp-delete-link, .deletelink');
+        if (!deleteLink) return;
+        const dialog = JSON.parse(
+            document.getElementById('climate-station-delete-dialog').textContent);
+        deleteLink.addEventListener('click', function (e) {
+            e.preventDefault();
+            let message = `Delete climate station "${dialog.station}"?`;
+            if (dialog.related.length) {
+                message += `\n\nThis will also delete:\n- ${dialog.related.join('\n- ')}`;
+            }
+            message += '\n\nThe deletion runs in the background.';
+            if (!confirm(message)) return;
+            const form = document.createElement('form');
+            form.method = 'post';
+            form.action = dialog.url;
+            const fields = {
+                csrfmiddlewaretoken: document.querySelector('[name=csrfmiddlewaretoken]').value,
+                post: 'yes'
+            };
+            Object.entries(fields).forEach(([name, value]) => {
+                const input = document.createElement('input');
+                input.type = 'hidden';
+                input.name = name;
+                input.value = value;
+                form.appendChild(input);
+            });
+            document.body.appendChild(form);
+            form.submit();
+        });
+    })();
+</script>
+{% endif %}
+{% endblock %}
