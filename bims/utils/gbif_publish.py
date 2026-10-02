@@ -3,7 +3,7 @@ import csv
 import os
 import zipfile
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Iterable, Tuple, List
 from xml.sax.saxutils import escape as _xe
 
@@ -504,6 +504,13 @@ def gather_data_for_source_reference(source_reference) -> Iterable[BiologicalCol
             source_reference=source_reference,
         )
         .exclude(source_collection__iexact="gbif")
+        .exclude(
+            Q(end_embargo_date__gt=date.today()) &
+            (
+                Q(start_embargo_date__isnull=True) |
+                Q(start_embargo_date__lte=date.today())
+            )
+        )
         .select_related("taxonomy", "site", "record_type", "survey", "licence")
         .distinct()
     )

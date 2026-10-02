@@ -19,7 +19,10 @@ from bims.api_views.layers import CloudNativeLayerList, LayerByUUIDView
 from bims.api_views.minisass_observations import MiniSASSObservationsView
 from bims.api_views.invasions import InvasionsList
 from bims.api_views.taxon_update import UpdateTaxon, ReviewTaxonProposal
-from bims.api_views.reference import DeleteRecordsByReferenceId
+from bims.api_views.reference import (
+    DeleteRecordsByReferenceId,
+    DataTypeSummaryByReferenceId
+)
 # from rest_framework.documentation import include_docs_urls
 from bims.api_views.boundary import (
     BoundaryList,
@@ -463,6 +466,9 @@ urlpatterns = [
     path('delete-records-by-source-reference-id/<int:source_reference_id>/',
          DeleteRecordsByReferenceId.as_view(),
          name='delete-records-by-source-reference-id'),
+    path('data-type-summary-by-source-reference-id/<int:source_reference_id>/',
+         DataTypeSummaryByReferenceId.as_view(),
+         name='data-type-summary-by-source-reference-id'),
     re_path(r'^taxon-tag-autocomplete/$',
             TaxonTagAutocompleteAPIView.as_view(),
             name='taxon-tag-autocomplete'),

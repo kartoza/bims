@@ -40,6 +40,11 @@
 
             <form enctype="multipart/form-data" name="source_reference_form" method="post">
                 {% csrf_token %}
+                {% for message in messages %}
+                    {% if 'source-reference-data-type' in message.tags %}
+                        <div class="alert {% if message.level_tag == 'error' %}alert-danger{% else %}alert-success{% endif %}">{{ message }}</div>
+                    {% endif %}
+                {% endfor %}
                 <div class="form-group row">
                     <label for="name" class="col-sm-2 col-form-label">Type</label>
                     <div class="col-sm-10">
@@ -264,11 +269,63 @@
                     </div>
                 </div>
                 {% endif %}
+                {% if can_update_data_type and total_records %}
+                <div id="update-data-type"></div>
+                <div class="form-group row">
+                    <label class="col-sm-2 col-form-label">Data type</label>
+                    <div class="col-sm-10">
+                        <small class="form-text text-muted" style="margin-bottom: 10px">
+                            Change the data sharing level of the {{ total_records }} occurrence record{{ total_records|pluralize }}
+                            linked to this source reference. Between the embargo start and end dates the records are only
+                            visible to their owner; after the end date they follow the new data type (e.g. Public).
+                            Leave the start date empty to start the embargo immediately.
+                        </small>
+                        <div class="form-row">
+                            <div class="col-md-6 mb-2">
+                                <label for="current_data_type" class="small mb-1">Current data type</label>
+                                <select name="current_data_type" id="current_data_type" class="form-control data-type-filter">
+                                    <option value="">Any</option>
+                                    {% for value, label in data_type_choices %}
+                                        <option value="{{ value }}">{{ label }}</option>
+                                    {% endfor %}
+                                    <option value="unspecified">Unspecified</option>
+                                </select>
+                            </div>
+                            <div class="col-md-6 mb-2">
+                                <label for="new_data_type" class="small mb-1">New data type</label>
+                                <select name="new_data_type" id="new_data_type" class="form-control">
+                                    <option value="">Keep unchanged</option>
+                                    {% for value, label in data_type_choices %}
+                                        <option value="{{ value }}">{{ label }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div class="col-md-6 mb-2">
+                                <label for="embargo_start_date" class="small mb-1">Embargo start date</label>
+                                <input type="text" name="embargo_start_date" id="embargo_start_date" class="form-control embargo-date"
+                                       placeholder="DD/MM/YYYY" autocomplete="off">
+                            </div>
+                            <div class="col-md-6 mb-2">
+                                <label for="embargo_end_date" class="small mb-1">Embargo end date</label>
+                                <input type="text" name="embargo_end_date" id="embargo_end_date" class="form-control embargo-date"
+                                       placeholder="DD/MM/YYYY" autocomplete="off">
+                                <small class="form-text text-muted">Required when a start date is set.</small>
+                            </div>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" value="1" id="remove_embargo" name="remove_embargo">
+                            <label class="form-check-label" for="remove_embargo">Remove existing embargo</label>
+                        </div>
+                        <small class="form-text text-muted">Matching records: <span id="data-type-summary">-</span></small>
+                    </div>
+                </div>
+                {% endif %}
                 <div style="height: 20px"></div>
                 <div class="row" style="text-align: center">
                     <input style="margin-left: auto; margin-right: auto; width: 150px;" class="btn btn-primary" type="submit" value="Save">
                 </div>
             </form>
+
         </div>
     </div>
 
@@ -403,5 +460,138 @@
         });
 
     </script>
+    {% if can_update_data_type and total_records %}
+    <script>
+        (function () {
+            const summaryUrl = '/api/data-type-summary-by-source-reference-id/{{ object.id }}/';
+            const dataTypeLabels = {
+                {% for value, label in data_type_choices %}'{{ value }}': '{{ label }}',{% endfor %}
+                'unspecified': 'Unspecified'
+            };
+            const $summary = $('#data-type-summary');
+            let previewRequest = null;
+            let matchingTotal = 0;
+            let matchingByType = {};
+
+            function dataTypeFilters() {
+                return {current_data_type: $('#current_data_type').val()};
+            }
+
+            function refreshDataTypeSummary() {
+                if (previewRequest) {
+                    previewRequest.abort();
+                }
+                $summary.text('Loading...');
+                previewRequest = $.ajax({
+                    url: summaryUrl,
+                    type: 'GET',
+                    data: dataTypeFilters(),
+                    success: function (res) {
+                        matchingTotal = res.total;
+                        matchingByType = res.data_types;
+                        const parts = Object.keys(res.data_types)
+                            .filter(key => res.data_types[key] > 0)
+                            .map(key => `${dataTypeLabels[key] || key}: ${res.data_types[key]}`);
+                        if (res.under_embargo > 0) {
+                            parts.push(`currently under embargo: ${res.under_embargo}`);
+                        }
+                        $summary.text(`${res.total}` + (parts.length ? ` (${parts.join(', ')})` : ''));
+                    },
+                    error: function (xhr, textStatus) {
+                        if (textStatus === 'abort') return;
+                        matchingTotal = 0;
+                        matchingByType = {};
+                        $summary.text((xhr.responseJSON && xhr.responseJSON.message) || `Could not load matching records (HTTP ${xhr.status}).`);
+                    }
+                });
+            }
+
+            $('.data-type-filter').on('change', refreshDataTypeSummary);
+            refreshDataTypeSummary();
+
+            // Parse a DD/MM/YYYY string, returns null when it is invalid
+            function parseDate(value) {
+                const match = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(value);
+                if (!match) return null;
+                const date = new Date(+match[3], +match[2] - 1, +match[1]);
+                return date.getDate() === +match[1] && date.getMonth() === +match[2] - 1 ? date : null;
+            }
+
+            $('.embargo-date').datepicker({
+                changeMonth: true,
+                changeYear: true,
+                dateFormat: 'dd/mm/yy'
+            });
+            $('#embargo_start_date').datepicker('option', 'minDate', 0);
+
+            // Keep the end date picker after the start date (or today)
+            function updateEmbargoEndMin() {
+                const next = parseDate($('#embargo_start_date').val()) || new Date();
+                next.setDate(next.getDate() + 1);
+                $('#embargo_end_date').datepicker('option', 'minDate', next);
+            }
+            $('#embargo_start_date').on('change', updateEmbargoEndMin);
+            updateEmbargoEndMin();
+
+            $('#remove_embargo').on('change', function () {
+                $('.embargo-date').prop('disabled', this.checked);
+            });
+
+            $('form[name="source_reference_form"]').on('submit', function (e) {
+                const newDataType = $('#new_data_type').val();
+                const removeEmbargo = $('#remove_embargo').is(':checked');
+                const startDate = removeEmbargo ? '' : $('#embargo_start_date').val().trim();
+                const endDate = removeEmbargo ? '' : $('#embargo_end_date').val().trim();
+                if (!newDataType && !removeEmbargo && !startDate && !endDate) {
+                    return;
+                }
+                const start = parseDate(startDate);
+                const end = parseDate(endDate);
+                if ((startDate && !start) || (endDate && !end)) {
+                    e.preventDefault();
+                    alert('Embargo dates must use the DD/MM/YYYY format.');
+                    return;
+                }
+                if (start && !end) {
+                    e.preventDefault();
+                    alert('Please set the embargo end date.');
+                    return;
+                }
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+                if (start && start < today) {
+                    e.preventDefault();
+                    alert('Embargo start date must be today or in the future.');
+                    return;
+                }
+                if (end && end <= (start || today)) {
+                    e.preventDefault();
+                    alert(start
+                        ? 'Embargo end date must be after the start date.'
+                        : 'Embargo end date must be after today.');
+                    return;
+                }
+                const changes = [];
+                if (newDataType) {
+                    // Records without a data type are already treated as public
+                    let toChange = matchingTotal - (matchingByType[newDataType] || 0);
+                    if (newDataType === 'public') {
+                        toChange -= (matchingByType.unspecified || 0);
+                    }
+                    changes.push(`set the data type of ${toChange} record(s) to "${dataTypeLabels[newDataType]}"`);
+                }
+                if (removeEmbargo) {
+                    changes.push(`remove the embargo from ${matchingTotal} record(s)`);
+                } else if (endDate) {
+                    changes.push(`set an embargo on ${matchingTotal} record(s) ${startDate ? 'from ' + startDate : 'from today'} until ${endDate} (hidden from everyone but the owner)`);
+                }
+                const message = changes.join(' and ');
+                if (!confirm(message.charAt(0).toUpperCase() + message.slice(1) + '?')) {
+                    e.preventDefault();
+                }
+            });
+        })();
+    </script>
+    {% endif %}
     {% include 'footer.html' %}
 {% endblock %}
