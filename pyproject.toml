@@ -103,7 +103,7 @@ dependencies = [
     "requests-cache==0.6.0",
     "sentry-sdk==2.8.0",
     "service-identity==18.1.0",
-    "setuptools==69.5.1",
+    "setuptools==83.0.0",
     "simplejson==3.17.0",
     "sorl-thumbnail==13.0.0",
     "svglib==1.0.0",
