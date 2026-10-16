@@ -214,7 +214,11 @@ const VisualizationLayersList = (props) => {
                   </SortableKnob>
                   {layer.name}
                   {layer.type === 'Layer' && (
-                    <Badge color={layer.native_layer ? 'warning' : 'primary'} style={{ marginLeft: 5 }}>
+                    <Badge
+                      color={layer.native_layer ? 'warning' : 'primary'}
+                      className={layer.native_layer ? 'text-dark' : 'text-white'}
+                      style={{ marginLeft: 5 }}
+                    >
                       {layer.native_layer ? 'Native Layer' : 'WMS'}
                     </Badge>
                   )}
