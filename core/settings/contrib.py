@@ -107,6 +107,7 @@ SHARED_APPS = (
     'pesticide',
     'cloud_native_gis',
     'climate',
+    'groundwater',
     'django_celery_beat',
 )
 
@@ -139,6 +140,7 @@ TENANT_APPS = (
     'pesticide',
     'cloud_native_gis',
     'climate',
+    'groundwater',
 )
 
 MIDDLEWARE = (

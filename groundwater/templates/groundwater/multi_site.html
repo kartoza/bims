@@ -1,0 +1,65 @@
+{% extends 'main_base.html' %}
+{% load static %}
+
+{% block subtitle %}
+    Multiple Sites Dashboard - Groundwater
+{% endblock %}
+
+{% block head %}
+    <link href="{% static "css/sass_dashboard.css" %}" rel="stylesheet">
+    <link href="{% static "css/dashboard_buttons.css" %}" rel="stylesheet">
+    <link rel="stylesheet" href="{% static 'climate/css/dashboard.css' %}">
+{% endblock %}
+
+{% block body_content %}
+    <div class="body-form container climate-multi-site">
+        <div class="dashboard-title">
+            <h2>Multiple Sites Dashboard - Groundwater</h2>
+            <div class="dashboard-close"><i class="fa fa-times" aria-hidden="true"></i></div>
+        </div>
+        <div class="table-container">
+            <div class="table-title">Groundwater Summary</div>
+            <div class="table-overflow">
+                <table class="table table-condensed table-striped">
+                    <thead>
+                    <tr>
+                        <th>Station Name</th>
+                        <th>Site Code</th>
+                        <th>First Reading</th>
+                        <th>Last Reading</th>
+                        <th>Avg Level (m)</th>
+                        <th>Min Level (m)</th>
+                        <th>Max Level (m)</th>
+                        <th>Avg Temp (°C)</th>
+                        <th>Avg Conductivity (µS/cm)</th>
+                        <th>Readings</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    {% for station in stations %}
+                        <tr>
+                            <td>{{ station.name }}</td>
+                            <td><a href="{% url 'groundwater:groundwater-site' site_id=station.id %}">{{ station.site_code }}</a></td>
+                            <td>{{ station.first|date:'Y-m-d' }}</td>
+                            <td>{{ station.last|date:'Y-m-d' }}</td>
+                            <td>{{ station.level_avg|default_if_none:"--" }}</td>
+                            <td>{{ station.level_min|default_if_none:"--" }}</td>
+                            <td>{{ station.level_max|default_if_none:"--" }}</td>
+                            <td>{{ station.temperature_avg|default_if_none:"--" }}</td>
+                            <td>{{ station.conductivity_avg|default_if_none:"--" }}</td>
+                            <td>{{ station.readings }}</td>
+                        </tr>
+                    {% empty %}
+                        <tr><td colspan="10">No stations with groundwater data.</td></tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+{% endblock %}
+
+{% block extra_foot %}
+    <script src="{% static "js/libs/jquery/jquery-3.3.1.min.js" %}"></script>
+    <script src="{% static "groundwater/js/dashboard_close.js" %}"></script>
+{% endblock %}
