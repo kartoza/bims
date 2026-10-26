@@ -1,4 +1,5 @@
 from django.urls import re_path, path
+from rest_framework.routers import SimpleRouter
 
 from bims.api_views.coldp import ColDPMetadataView, ColDPTaxonView, ColDPSnapshotView
 from bims.api_views.checklist_version import (
@@ -29,6 +30,7 @@ from bims.api_views.boundary import (
     BoundaryGeojson
 )
 from bims.api_views.celery_status import CeleryStatus
+from bims.api_views.ogc_layer_management import OgcLayerViewSet
 from bims.api_views.duplicate_records import DuplicateRecordsApiView
 from bims.api_views.duplicate_sites import DuplicateSitesApiView
 from bims.api_views.location_site import (
@@ -634,3 +636,8 @@ urlpatterns = [
         name='checklist-version-group-members',
     ),
 ]
+
+ogc_layer_router = SimpleRouter()
+ogc_layer_router.register(
+    'ogc-layers', OgcLayerViewSet, basename='ogc-layer')
+urlpatterns += ogc_layer_router.urls
