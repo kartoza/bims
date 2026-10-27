@@ -379,6 +379,19 @@ class TestProtectedEndpoints(FastTenantTestCase):
                 codes.append(self.client.get(self.items_url()).status_code)
         self.assertEqual(codes, [200, 200, 429])
 
+    def test_bbox_evaluations_have_their_own_limit(self):
+        # Panning a map asks for a new bbox each time
+        bboxes = ['0,0,1,1', '2,2,3,3', '4,4,5,5']
+        with override_settings(OGC_RATE_LIMIT_EVALUATIONS=1,
+                               OGC_RATE_LIMIT_BBOX_EVALUATIONS=2), \
+                mock.patch('bims.utils.ogc_protection.time.time',
+                           return_value=1_700_000_010):
+            codes = [
+                self.client.get(
+                    self.items_url() + '?bbox=' + bbox).status_code
+                for bbox in bboxes]
+        self.assertEqual(codes, [200, 200, 429])
+
     def test_cached_requests_do_not_use_the_evaluation_budget(self):
         with override_settings(OGC_RATE_LIMIT_EVALUATIONS=1):
             codes = [self.client.get(self.items_url()).status_code

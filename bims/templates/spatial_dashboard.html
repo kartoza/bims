@@ -53,6 +53,16 @@
                     <div class="d-none" data-body>
                         <div id="spatial-dashboard-map" style="height: 360px; width: 100%;"></div>
                     </div>
+                    {% if user.is_staff and preferences.SiteSetting.enable_ogc_api %}
+                        <div class="container pt-2">
+                            <button class="btn btn-sm btn-primary"
+                                    id="publish-live-layer-btn"
+                                    style="width: 100%"
+                                    title="Publish the current filter as a live layer for ArcGIS or QGIS">
+                                Publish as live layer
+                            </button>
+                        </div>
+                    {% endif %}
                 </div>
 
                 <div class="vertical-space"></div>
@@ -362,6 +372,9 @@
     </div>
 
     {% include 'footer.html' %}
+{% if user.is_staff and preferences.SiteSetting.enable_ogc_api %}
+    {% include 'map_page/ogc-live-layer-templates.html' %}
+{% endif %}
 {% endblock %}
 
 {% block extra_foot %}
@@ -372,6 +385,10 @@
     <script src="{% static 'js/utils/filter_list.js' %}"></script>
     <script src="{% static 'js/libs/html2canvas.js' %}"></script>
     <script src="{% static 'js/libs/chart/Chart-2.7.2.js' %}"></script>
+    {% if user.is_staff and preferences.SiteSetting.enable_ogc_api %}
+        <script src="{% static 'js/libs/underscore-1.8.3/underscore-min.js' %}"></script>
+        <script src="{% static 'js/views/ogc_live_layer.js' %}"></script>
+    {% endif %}
     <script src="{% static 'js/spatial_dashboard.js' %}"></script>
     <script src="{% static 'js/dashboard_close.js' %}"></script>
 {% endblock %}

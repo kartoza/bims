@@ -182,6 +182,9 @@
     {% include 'map_page/search-panel-templates.html' %}
     {% include 'map_page/side-panel-templates.html' %}
     {% include 'map_page/dashboard-templates.html' %}
+    {% if user.is_staff and preferences.SiteSetting.enable_ogc_api %}
+        {% include 'map_page/ogc-live-layer-templates.html' %}
+    {% endif %}
 {% endblock %}
 
 {% block foot %}

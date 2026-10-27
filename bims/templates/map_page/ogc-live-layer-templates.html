@@ -1,0 +1,82 @@
+{# Templates of the "Publish as live layer" dialog, see js/views/ogc_live_layer.js #}
+<script type="text/template" id="ogc-live-layer-template">
+<div class="modal fade" id="ogc-live-layer-modal" tabindex="-1" role="dialog"
+     aria-hidden="true" style="z-index: 99998">
+  <div class="modal-dialog modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Live layer</h5>
+      </div>
+      <div class="modal-body">
+        <ul class="nav nav-tabs mb-3">
+          <li class="nav-item">
+            <a class="nav-link active" href="#" data-tab="publish">Publish</a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link" href="#" data-tab="mine">My live layers</a>
+          </li>
+        </ul>
+        <div class="ogc-tab" data-tab="publish">
+          <div class="ogc-form">
+            <p class="text-muted">
+              Publish the current filter as a live layer. ArcGIS Pro,
+              ArcGIS Online and QGIS read it from a URL and show the latest
+              data without an export.
+            </p>
+            <div class="form-group">
+              <label for="ogc-layer-name">Layer name</label>
+              <input type="text" class="form-control" id="ogc-layer-name"
+                     maxlength="255">
+            </div>
+            <div class="form-check ogc-sensitive" style="display: none">
+              <input type="checkbox" class="form-check-input"
+                     id="ogc-include-sensitive">
+              <label class="form-check-label" for="ogc-include-sensitive">
+                Include sensitive data
+              </label>
+            </div>
+            <div class="form-check ogc-private mb-2" style="display: none">
+              <input type="checkbox" class="form-check-input"
+                     id="ogc-include-private">
+              <label class="form-check-label" for="ogc-include-private">
+                Include private data
+              </label>
+            </div>
+            <div class="alert alert-warning ogc-data-warning"
+                 style="display: none">
+              Anyone with the URL can read this data. Keep the URL secret.
+            </div>
+            <div class="ogc-status alert alert-info">Checking the filter...</div>
+          </div>
+          <div class="ogc-result" style="display: none"></div>
+        </div>
+        <div class="ogc-tab" data-tab="mine" style="display: none">
+          <div class="ogc-mine-message"></div>
+          <div class="ogc-mine-new alert alert-success" style="display: none"></div>
+          <div class="ogc-mine-list"></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-primary ogc-create" disabled>
+          Create layer
+        </button>
+        <button type="button" class="btn btn-secondary" data-dismiss="modal">
+          Close
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+</script>
+
+<script type="text/template" id="ogc-live-layer-instructions-template">
+<h6 class="mt-3">How to use the URL</h6>
+<ul class="pl-3">
+  <li><b>ArcGIS Pro:</b> Insert &gt; New Map, then Map &gt; Add Data &gt;
+    Data From Path, choose <i>OGC API</i> and paste the URL.</li>
+  <li><b>ArcGIS Online:</b> Map Viewer &gt; Add &gt; Add layer from URL,
+    choose <i>OGC API Features</i> and paste the URL.</li>
+  <li><b>QGIS:</b> Layer &gt; Add Layer &gt; Add WFS / OGC API - Features
+    Layer, create a new connection and paste the URL.</li>
+</ul>
+</script>

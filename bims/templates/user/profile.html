@@ -77,6 +77,11 @@
                         <li class="nav-item">
                             <a class="nav-link" data-toggle="tab" role="tab" id="references-tab" href="#references">Source References</a>
                         </li>
+                        {% if request.user == object and request.user.is_staff and preferences.SiteSetting.enable_ogc_api %}
+                        <li class="nav-item">
+                            <a class="nav-link" data-toggle="tab" role="tab" id="live-layers-tab" href="#live-layers">Live Layers</a>
+                        </li>
+                        {% endif %}
                     </ul>
                     <div class="tab-content" id="myTabContent" style="margin-top: 20px;">
                         <div class="tab-pane fade show active" id="overview"
@@ -179,6 +184,15 @@
                             </div>
                             {% endif %}
                         </div>
+                        {% if request.user == object and request.user.is_staff and preferences.SiteSetting.enable_ogc_api %}
+                        <div class="tab-pane fade" id="live-layers" role="tabpanel"
+                             aria-labelledby="live-layers-tab">
+                            <h5 style="font-weight: bold">Live Layers</h5>
+                            <div class="ogc-mine-message"></div>
+                            <div class="ogc-mine-new alert alert-success" style="display: none"></div>
+                            <div class="ogc-mine-list"></div>
+                        </div>
+                        {% endif %}
                     </div>
                     </div>
                 </div>
@@ -242,6 +256,16 @@
     <script src="{% static "js/libs/bootstrap-4.0.0/js/bootstrap.min.js" %}"></script>
     <script src="{% static "js/libs/moment.js" %}"></script>
     <script src="{% static "js/libs/chart/Chart-2.7.2.js" %}"></script>
+    {% if request.user == object and request.user.is_staff and preferences.SiteSetting.enable_ogc_api %}
+        <script src="{% static 'js/libs/underscore-1.8.3/underscore-min.js' %}"></script>
+        <script src="{% static 'js/views/ogc_live_layer.js' %}"></script>
+        <script>
+            // After the page scripts: csrfmiddlewaretoken is defined below
+            $(function () {
+                OgcLiveLayer.mountList($('#live-layers'));
+            });
+        </script>
+    {% endif %}
     <script>
         $(function (){
             let options =  {
