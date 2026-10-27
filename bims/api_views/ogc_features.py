@@ -24,7 +24,7 @@ from bims.models.biological_collection_record import (
     BiologicalCollectionRecord
 )
 from bims.models.ogc_layer import OgcLayer
-from bims.serializers.ogc_feature_serializer import (
+from bims.serializers.ogc_serializer import (
     feature_from_record,
     features_from_records,
 )
