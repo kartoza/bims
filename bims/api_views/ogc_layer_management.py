@@ -9,15 +9,18 @@ layer is created or its token is rotated, and cannot be shown again.
 from django.conf import settings
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import APIException
+from rest_framework.exceptions import APIException, PermissionDenied
 from rest_framework.permissions import BasePermission, IsAuthenticated
 from rest_framework.response import Response
 
 from bims.models.ogc_layer import OgcLayer
-from bims.serializers.ogc_serializer import OgcLayerSerializer
+from bims.serializers.ogc_serializer import OgcLayerSerializer, parse_query
 from bims.utils.ogc_layer import (
     OgcLayerError,
+    OgcLayerOverCapError,
     count_layer_records,
+    has_narrowing_filter,
+    validate_layer,
 )
 from bims.utils.ogc_protection import OgcLayerProtectionError
 
@@ -61,6 +64,9 @@ class OgcLayerViewSet(viewsets.ModelViewSet):
 
     def initial(self, request, *args, **kwargs):
         super().initial(request, *args, **kwargs)
+        if self.action in ('create', 'preview') and not (
+                request.user.is_staff or request.user.is_superuser):
+            raise PermissionDenied('Only staff can create live layers.')
         if request.method == 'POST' and self.action == 'create' and \
                 not settings.OGC_LAYERS_ENABLED:
             raise OgcLayersDisabled()
@@ -109,6 +115,58 @@ class OgcLayerViewSet(viewsets.ModelViewSet):
         layer.name = serializer.validated_data.get('name', layer.name)
         layer.save(update_fields=['name'])
         return Response(self.get_serializer(layer).data)
+
+    @action(detail=False, methods=['post'])
+    def preview(self, request):
+        """Check a filter and count its records without creating a layer.
+
+        Always answers 200 with a ``status`` the UI can show: ``ok``,
+        ``empty_filter``, ``unsupported``, ``over_cap``, ``not_allowed``,
+        ``busy`` or ``disabled``.
+        """
+        group_names = set(
+            request.user.groups.values_list('name', flat=True))
+        result = {
+            'max_records': settings.OGC_LAYER_MAX_RECORDS,
+            'can_include_sensitive': 'SensitiveDataGroup' in group_names,
+            'can_include_private': 'PrivateDataGroup' in group_names,
+            'record_count': None,
+            'status': 'ok',
+            'message': '',
+        }
+        if not settings.OGC_LAYERS_ENABLED:
+            result.update(
+                status='disabled', message=OgcLayersDisabled.default_detail)
+            return Response(result)
+        query = parse_query(request.data.get('query_string') or '')
+        include_sensitive = bool(request.data.get('include_sensitive'))
+        include_private = bool(request.data.get('include_private'))
+        if (
+            include_sensitive and not result['can_include_sensitive'] or
+            include_private and not result['can_include_private']
+        ):
+            result.update(
+                status='not_allowed',
+                message='You are not allowed to include this data.')
+            return Response(result)
+        layer = OgcLayer(
+            owner=request.user, query=query,
+            include_sensitive=include_sensitive,
+            include_private=include_private)
+        try:
+            result['record_count'] = validate_layer(layer)
+        except OgcLayerOverCapError as exc:
+            result.update(status='over_cap', message=str(exc))
+        except OgcLayerError as exc:
+            result.update(
+                status='unsupported' if has_narrowing_filter(query)
+                else 'empty_filter',
+                message=str(exc))
+        except OgcLayerProtectionError:
+            result.update(
+                status='busy',
+                message='The server is busy. Try again in a moment.')
+        return Response(result)
 
     @action(detail=True, methods=['post'], url_path='rotate-token')
     def rotate_token(self, request, pk=None):

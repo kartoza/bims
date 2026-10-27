@@ -459,6 +459,12 @@ class SiteSetting(Preferences):
         default=False
     )
 
+    enable_ogc_api = models.BooleanField(
+        default=False,
+        help_text='Let logged-in users publish their filters as live layers '
+                  '(OGC API - Features) for ArcGIS or QGIS'
+    )
+
     resend_api_key = models.CharField(
         max_length=128,
         default='',

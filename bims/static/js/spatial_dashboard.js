@@ -906,6 +906,16 @@
             });
         }
 
+        const publishLiveLayerBtn = document.getElementById('publish-live-layer-btn');
+        if (publishLiveLayerBtn && typeof OgcLiveLayer !== 'undefined') {
+            publishLiveLayerBtn.addEventListener('click', function () {
+                OgcLiveLayer.open({
+                    query: queryString,
+                    name: 'Live layer ' + new Date().toISOString().slice(0, 10)
+                });
+            });
+        }
+
         let occurrenceDownloadBtn = document.getElementById('occurrence-download-btn');
         if (occurrenceDownloadBtn) {
             occurrenceDownloadBtn.addEventListener('click', function () {

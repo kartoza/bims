@@ -201,6 +201,7 @@ class SiteSettingAdmin(PreferencesAdmin):
                 "enable_harvest_taxonworks",
                 "enable_checklist_versioning",
                 "enable_ecosystem_type",
+                "enable_ogc_api",
                 "enable_download_request_approval",
                 "max_download_records",
                 "download_request_expiry_months",

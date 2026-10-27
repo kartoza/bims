@@ -7,6 +7,7 @@ define([
     'htmlToCanvas',
     'chartJs',
     'utils/filter_list',
+    'views/ogc_live_layer',
 ], function (
     Backbone,
     _,
@@ -15,7 +16,8 @@ define([
     Shared,
     HtmlToCanvas,
     ChartJs,
-    filterList
+    filterList,
+    OgcLiveLayer
 ) {
     return Backbone.View.extend({
         id: 'detailed-site-dashboard',
@@ -68,6 +70,7 @@ define([
             'click .btn-html-img': 'convertToPNG',
             'click .download-gbif-ids' : 'downloadGBIfIds',
             'click .download-checklist' : 'downloadChecklist',
+            'click .publish-live-layer': 'publishLiveLayer',
             'change .dashboard-data-frequency': 'frequencyChanged'
         },
         initialize: function (options) {
@@ -875,6 +878,12 @@ define([
             }
             button.html(name);
             button.prop('disabled', false);
+        },
+        publishLiveLayer: function () {
+            OgcLiveLayer.open({
+                query: this.currentFiltersUrl,
+                name: 'Live layer ' + new Date().toISOString().slice(0, 10)
+            });
         },
         downloadChecklist: function (e) {
             let csvName = 'Checklist';

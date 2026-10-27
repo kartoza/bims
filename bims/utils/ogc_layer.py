@@ -399,9 +399,18 @@ def _record_evaluation(layer, bbox, started):
 def _find_ids(layer, bbox, cache_key, use_cache):
     cap = settings.OGC_LAYER_MAX_RECORDS
     if use_cache:
-        check_rate(
-            'evaluate', layer.pk, settings.OGC_RATE_LIMIT_EVALUATIONS,
-            message='This layer is being re-evaluated too often.')
+        # GIS clients ask for a new bbox on every pan or zoom, and each one
+        # is a cache miss, so those get a higher limit than whole layers.
+        # They are cheaper too, the search is cut down by the bbox.
+        if bbox:
+            check_rate(
+                'evaluate-bbox', layer.pk,
+                settings.OGC_RATE_LIMIT_BBOX_EVALUATIONS,
+                message='This layer is being re-evaluated too often.')
+        else:
+            check_rate(
+                'evaluate', layer.pk, settings.OGC_RATE_LIMIT_EVALUATIONS,
+                message='This layer is being re-evaluated too often.')
     with statement_timeout():
         matched = get_matched_queryset(layer)
         if bbox:

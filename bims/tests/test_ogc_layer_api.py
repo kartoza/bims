@@ -23,6 +23,7 @@ class OgcLayerApiTestCase(FastTenantTestCase):
         self.owner = UserF.create(username='api_owner')
         self.other = UserF.create(username='api_other')
         self.staff = UserF.create(username='api_staff', is_staff=True)
+        self.creator = UserF.create(username='api_creator', is_staff=True)
         self.taxon = TaxonomyF.create()
         self.site = LocationSiteF.create()
         for _ in range(3):
@@ -56,7 +57,7 @@ class OgcLayerApiTestCase(FastTenantTestCase):
     # Create
 
     def test_create_from_query_string(self):
-        self.client.force_login(self.owner)
+        self.client.force_login(self.creator)
         response = self.post({
             'name': 'My layer',
             'query_string': '?taxon=%s&requester=99' % self.taxon.id,
@@ -64,7 +65,7 @@ class OgcLayerApiTestCase(FastTenantTestCase):
         self.assertEqual(response.status_code, 201, response.content)
         data = response.json()
         layer = OgcLayer.objects.get(pk=data['id'])
-        self.assertEqual(layer.owner, self.owner)
+        self.assertEqual(layer.owner, self.creator)
         self.assertEqual(layer.query, {'taxon': str(self.taxon.id)})
         self.assertEqual(data['record_count'], 3)
         self.assertTrue(data['url'].startswith('http'))
@@ -74,7 +75,7 @@ class OgcLayerApiTestCase(FastTenantTestCase):
         self.assertEqual(OgcLayer.get_by_token(token), layer)
 
     def test_created_url_serves_the_layer(self):
-        self.client.force_login(self.owner)
+        self.client.force_login(self.creator)
         url = self.post({
             'name': 'L', 'query': {'taxon': str(self.taxon.id)}
         }).json()['url']
@@ -83,13 +84,13 @@ class OgcLayerApiTestCase(FastTenantTestCase):
         self.assertEqual(response.status_code, 200)
 
     def test_create_from_query_object(self):
-        self.client.force_login(self.owner)
+        self.client.force_login(self.creator)
         response = self.post(
             {'name': 'L', 'query': {'taxon': str(self.taxon.id)}})
         self.assertEqual(response.status_code, 201, response.content)
 
     def test_create_rejects_empty_filter(self):
-        self.client.force_login(self.owner)
+        self.client.force_login(self.creator)
         for payload in (
             {'name': 'L', 'query': {}},
             {'name': 'L', 'query_string': ''},
@@ -101,13 +102,13 @@ class OgcLayerApiTestCase(FastTenantTestCase):
         self.assertFalse(OgcLayer.objects.exists())
 
     def test_create_rejects_blank_name(self):
-        self.client.force_login(self.owner)
+        self.client.force_login(self.creator)
         response = self.post({'name': '  ', 'query': {'taxon': '1'}})
         self.assertEqual(response.status_code, 400)
 
     @override_settings(OGC_LAYER_MAX_RECORDS=2)
     def test_create_rejects_over_cap(self):
-        self.client.force_login(self.owner)
+        self.client.force_login(self.creator)
         response = self.post(
             {'name': 'L', 'query': {'taxon': str(self.taxon.id)}})
         self.assertEqual(response.status_code, 400)
@@ -115,13 +116,13 @@ class OgcLayerApiTestCase(FastTenantTestCase):
         self.assertFalse(OgcLayer.objects.exists())
 
     def test_create_rejects_query_and_query_string(self):
-        self.client.force_login(self.owner)
+        self.client.force_login(self.creator)
         response = self.post({
             'name': 'L', 'query': {'taxon': '1'}, 'query_string': 'taxon=1'})
         self.assertEqual(response.status_code, 400)
 
     def test_create_rejects_sensitive_without_group(self):
-        self.client.force_login(self.owner)
+        self.client.force_login(self.creator)
         response = self.post({
             'name': 'L', 'query': {'taxon': str(self.taxon.id)},
             'include_sensitive': True})
@@ -130,18 +131,30 @@ class OgcLayerApiTestCase(FastTenantTestCase):
 
     @override_settings(OGC_MAX_LAYERS_PER_OWNER=1)
     def test_create_respects_layer_limit(self):
-        self.create_layer()
-        self.client.force_login(self.owner)
+        self.create_layer(owner=self.creator)
+        self.client.force_login(self.creator)
         response = self.post(
             {'name': 'L', 'query': {'taxon': str(self.taxon.id)}})
         self.assertEqual(response.status_code, 400)
 
     @override_settings(OGC_LAYERS_ENABLED=False)
     def test_create_when_disabled(self):
-        self.client.force_login(self.owner)
+        self.client.force_login(self.creator)
         response = self.post(
             {'name': 'L', 'query': {'taxon': str(self.taxon.id)}})
         self.assertEqual(response.status_code, 503)
+
+    def test_create_and_preview_need_staff(self):
+        self.client.force_login(self.owner)
+        self.assertEqual(self.post(
+            {'name': 'L', 'query': {'taxon': str(self.taxon.id)}}
+        ).status_code, 403)
+        response = self.client.post(
+            self.list_url + 'preview/',
+            {'query_string': 'taxon=%s' % self.taxon.id},
+            content_type='application/json')
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(OgcLayer.objects.count(), 0)
 
     # List and retrieve
 
