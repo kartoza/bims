@@ -497,13 +497,13 @@
                              style="width: 100%;">
                         </div>
                     </div>
-                    <div class="container" style="padding-top: 10px;">
-                        {% if user.is_staff and preferences.SiteSetting.enable_ogc_api %}
-                        <button class="btn btn-primary publish-live-layer" style="width: 100%; font-size: 11pt" title="Publish the current filter as a live layer for ArcGIS or QGIS">
-                            Publish as live layer
-                        </button>
-                        {% endif %}
-                    </div>
+                    {% if user.is_staff and preferences.SiteSetting.enable_ogc_api %}
+                        <div class="container" style="padding-top: 10px;">
+                            <button class="btn btn-primary publish-live-layer" style="width: 100%; font-size: 11pt" title="Publish the current filter as a live layer for ArcGIS or QGIS">
+                                Publish as live layer
+                            </button>
+                        </div>
+                    {% endif %}
                 </div>
                 {# Overview #}
                 <div class="card overview" id="species-ssdd-overview">
