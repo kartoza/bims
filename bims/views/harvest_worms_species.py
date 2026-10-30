@@ -82,7 +82,8 @@ class HarvestWormsSpeciesView(UserPassesTestMixin, LoginRequiredMixin, TemplateV
         taxon_group_id = request.POST.get('taxon_group')
         aphia_id_raw = request.POST.get('aphia_id', '').strip()
         harvest_synonyms = request.POST.get('harvest_synonyms_for_accepted') == '1'
-        freshwater_only = request.POST.get('freshwater_only') == '1'
+        # On by default; the form posts '0' only when the box is unticked
+        freshwater_only = request.POST.get('freshwater_only', '1') != '0'
 
         if not taxon_group_id:
             messages.error(request, 'Please select a taxon group.')

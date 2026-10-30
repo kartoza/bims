@@ -21,7 +21,7 @@ from bims.tasks.harvest_worms_species import harvest_worms_species
 def _api_record(aphia_id, sci_name, rank, status,
                 genus="", family="Accipitridae",
                 valid_aphia_id=None, valid_name=None,
-                is_freshwater=0):
+                is_freshwater=1):
     """Minimal WoRMS REST-API-style record dict."""
     return {
         "AphiaID": aphia_id,

@@ -199,11 +199,12 @@
                         <option value="ACCEPTED" {% if object.taxonomic_status == 'ACCEPTED' or not object.taxonomic_status %}selected{% endif %}>Accepted</option>
                         <option value="SYNONYM" {% if object.taxonomic_status and 'SYNONYM' in object.taxonomic_status|upper %}selected{% endif %}>Synonym</option>
                         <option value="DOUBTFUL" {% if object.taxonomic_status and object.taxonomic_status|upper == 'DOUBTFUL' %}selected{% endif %}>Doubtful</option>
+                        <option value="UNACCEPTED" {% if object.taxonomic_status and object.taxonomic_status|upper == 'UNACCEPTED' %}selected{% endif %}>Unaccepted</option>
                     </select>
                 </div>
             </div>
 
-            {% with object.additional_data|value_by_key:'taxonomicStatus' as worms_status %}
+            {% with object.additional_data|value_by_key:'WoRMS status' as worms_status_new %}{% with object.additional_data|value_by_key:'taxonomicStatus' as worms_status_old %}{% firstof worms_status_new worms_status_old as worms_status %}
             {% if worms_status %}
             <div class="form-group row">
                 <label for="worms_status" class="col-sm-2 col-form-label col-form-label">
@@ -216,7 +217,7 @@
                 </div>
             </div>
             {% endif %}
-            {% endwith %}
+            {% endwith %}{% endwith %}
 
             <div class="form-group row">
                 <label for="addendum" class="col-sm-2 col-form-label col-form-label">
