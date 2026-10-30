@@ -145,7 +145,8 @@ def harvest_worms_species(session_id: int, schema_name: str):
 
         taxon_group = session.module_group
         harvest_synonyms = session.harvest_synonyms
-        freshwater_only = bool(additional.get("freshwater_only"))
+        # Only freshwater taxa are harvested unless explicitly disabled
+        freshwater_only = additional.get("freshwater_only", True) is not False
         processor = _SessionWormsTaxaProcessor(_log)
         total_processed = len(processed_ids)
 

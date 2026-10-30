@@ -96,20 +96,23 @@
                         <label class="col-sm-2 col-form-label"></label>
                         <div class="col-sm-10">
                             <div class="form-check">
+                                <input type="hidden" name="freshwater_only" value="0">
                                 <input
                                     class="form-check-input"
                                     type="checkbox"
                                     id="freshwater-only"
                                     name="freshwater_only"
                                     value="1"
-                                    {% if request.POST.freshwater_only %}checked{% endif %}
+                                    {% if request.method != 'POST' or request.POST.freshwater_only == '1' %}checked{% endif %}
                                 >
                                 <label class="form-check-label" for="freshwater-only">
                                     Freshwater taxa only
                                 </label>
                                 <small class="form-text text-muted">
-                                    When checked, only taxa flagged as <code>isFreshwater=1</code> in WoRMS will be imported.
-                                    Non-freshwater records are still traversed but not saved to the database.
+                                    When checked (recommended), only taxa that WoRMS marks as freshwater are imported. Taxa that are
+                                    exclusively marine, brackish or terrestrial are skipped, but their
+                                    child taxa are still checked. Imported freshwater taxa keep any
+                                    additional habitat tags (brackish, marine, terrestrial) from WoRMS.
                                 </small>
                             </div>
                         </div>

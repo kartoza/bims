@@ -439,6 +439,8 @@ def approve_unvalidated_taxa_by_group(
         .filter(taxongroup_id__in=group_ids,
                 is_validated=False,
                 is_rejected=False)
+        # Unaccepted taxa stay unpublished, visible to experts only
+        .exclude(taxonomy__taxonomic_status="UNACCEPTED")
         .select_related("taxonomy", "taxongroup")
         .order_by("id")
     )

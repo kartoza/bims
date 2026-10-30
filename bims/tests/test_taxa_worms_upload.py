@@ -716,6 +716,76 @@ class TestWormsTaxaUpload(FastTenantTestCase):
         self.assertEqual(t.taxonomic_status, 'UNACCEPTED')
 
     # ------------------------------------------------------------------
+    # Status rules when WoRMS has no accepted name
+    # ------------------------------------------------------------------
+
+    def _no_accepted_row(self, aphia_id, name, status, accepted_id="", accepted_name=""):
+        genus, epithet = name.split(" ")
+        return {
+            "AphiaID": aphia_id,
+            "ScientificName": name,
+            "Authority": "",
+            "AphiaID_accepted": accepted_id,
+            "ScientificName_accepted": accepted_name,
+            "Authority_accepted": "",
+            "Kingdom": "Animalia", "Phylum": "Arthropoda", "Class": "Malacostraca",
+            "Order": "Decapoda", "Family": "Atyidae",
+            "Genus": genus, "Subgenus": "",
+            "Species": epithet, "Subspecies": "",
+            "taxonRank": "species",
+            "taxonomicStatus": status,
+            "Marine": 0, "Brackish": 0, "Fresh": 1, "Terrestrial": 0,
+            "Qualitystatus": "", "Unacceptreason": "",
+            "DateLastModified": "", "LSID": "", "Parent AphiaID": "",
+            "Storedpath": "", "Citation": "",
+        }
+
+    class _Proc(WormsTaxaProcessor):
+        def handle_error(self, row, message): pass
+        def finish_processing_row(self, row, taxonomy): pass
+
+    @mock.patch('bims.scripts.taxa_upload_worms.preferences')
+    def test_nomen_nudum_pointing_to_itself_is_unaccepted(self, mock_preferences):
+        mock_preferences.SiteSetting.auto_validate_taxa_on_upload = True
+        row = self._no_accepted_row(
+            9001, "Caridina barombi", "nomen nudum",
+            accepted_id=9001, accepted_name="Caridina barombi")
+        self._Proc().process_worms_data(row, self.taxon_group)
+
+        t = Taxonomy.objects.get(aphia_id=9001)
+        self.assertEqual(t.taxonomic_status, 'UNACCEPTED')
+        self.assertIsNone(t.accepted_taxonomy)
+        self.assertEqual(t.additional_data['WoRMS status'], 'nomen nudum')
+        # Never published, even with auto-validate on
+        link = self.taxon_group.taxonomies.through.objects.get(
+            taxongroup=self.taxon_group, taxonomy=t)
+        self.assertFalse(link.is_validated)
+
+    @mock.patch('bims.scripts.taxa_upload_worms.preferences')
+    def test_reharvest_clears_stale_self_link(self, mock_preferences):
+        mock_preferences.SiteSetting.auto_validate_taxa_on_upload = True
+        row = self._no_accepted_row(9003, "Caridina sharmai", "nomen nudum")
+        t = self._Proc().process_worms_data(row, self.taxon_group)
+        t.accepted_taxonomy = t
+        t.save()
+
+        self._Proc().process_worms_data(row, self.taxon_group)
+
+        t.refresh_from_db()
+        self.assertIsNone(t.accepted_taxonomy)
+        self.assertEqual(t.taxonomic_status, 'UNACCEPTED')
+
+    @mock.patch('bims.scripts.taxa_upload_worms.preferences')
+    def test_nomen_dubium_without_accepted_name_is_doubtful(self, mock_preferences):
+        mock_preferences.SiteSetting.auto_validate_taxa_on_upload = True
+        row = self._no_accepted_row(9002, "Caridina powelli", "nomen dubium")
+        self._Proc().process_worms_data(row, self.taxon_group)
+
+        t = Taxonomy.objects.get(aphia_id=9002)
+        self.assertEqual(t.taxonomic_status, 'DOUBTFUL')
+        self.assertIsNone(t.accepted_taxonomy)
+
+    # ------------------------------------------------------------------
     # Subspecies parent chain: Species intermediate created correctly
     # ------------------------------------------------------------------
 

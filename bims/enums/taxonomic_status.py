@@ -16,6 +16,9 @@ class TaxonomicStatus(Enum):
     # Treated as accepted, but doubtful whether this is correct.
     DOUBTFUL = 'Doubtful'
 
+    # No accepted name exists. Visible to experts only, never published.
+    UNACCEPTED = 'Unaccepted'
+
     # A general synonym, the exact type is unknown.
     SYNONYM = 'Synonym'
 

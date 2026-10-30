@@ -163,6 +163,9 @@ class WormsTaxaProcessor(TaxaProcessor):
 
     SKIP_STATUSES = set()
 
+    # Statuses that become DOUBTFUL when WoRMS has no accepted name
+    DOUBTFUL_STATUS_KEYS = {"nomen dubium", "taxon inquirendum", "unassessed"}
+
     HABITAT_TAGS = [
         ("Marine", "marine"),
         ("Brackish", "brackish"),
@@ -400,6 +403,26 @@ class WormsTaxaProcessor(TaxaProcessor):
             except (ValueError, TypeError):
                 pass
 
+        # An accepted name only exists if WoRMS points to a *different* taxon.
+        # Rows that point back to themselves (e.g. a nomen nudum whose
+        # valid_name is its own name) have no accepted name.
+        accepted_aphia_raw = row.get(WORMS_COLUMN_NAMES["aphia_id_acc"])
+        points_to_self = (
+            (aphia_id_int is not None and str(accepted_aphia_raw) == str(aphia_id_int))
+            or accepted_name.lower() == canonical_name.lower()
+        )
+        has_accepted_name = bool(accepted_name) and not points_to_self
+        if not is_accepted and not has_accepted_name:
+            accepted_name = ""
+            if status_key not in self.STATUS_MAP or self.STATUS_MAP[status_key] != "ACCEPTED":
+                taxonomic_status = (
+                    "DOUBTFUL" if status_key in self.DOUBTFUL_STATUS_KEYS
+                    else "UNACCEPTED"
+                )
+        elif not is_accepted and status_key not in self.STATUS_MAP:
+            # Accepted name exists but the status has no explicit mapping
+            taxonomic_status = "SYNONYM"
+
         existing = None
         if aphia_id_int:
             existing = Taxonomy.objects.filter(aphia_id=aphia_id_int).first()
@@ -430,6 +453,10 @@ class WormsTaxaProcessor(TaxaProcessor):
             taxonomy.author = authority
 
         is_synonym = False
+
+        if not is_accepted and not has_accepted_name:
+            # Drop any self/stale link left by an earlier harvest
+            taxonomy.accepted_taxonomy = None
 
         if taxonomic_status:
             taxonomy.taxonomic_status = taxonomic_status
@@ -515,6 +542,8 @@ class WormsTaxaProcessor(TaxaProcessor):
             taxonomy.aphia_id = aphia_id_int
 
         extras = dict(row)
+        # Original WoRMS status, kept untouched and shown to experts only
+        extras["WoRMS status"] = status_raw
         taxonomy.additional_data = extras
         self._attach_citation(taxonomy, row)
 
@@ -523,7 +552,11 @@ class WormsTaxaProcessor(TaxaProcessor):
         if fetch_col_id and not taxonomy.col_id:
             _try_set_col_id(taxonomy, rank)
 
-        auto_validate = preferences.SiteSetting.auto_validate_taxa_on_upload
+        # Unaccepted taxa are never published automatically
+        auto_validate = (
+            preferences.SiteSetting.auto_validate_taxa_on_upload
+            and taxonomy.taxonomic_status != "UNACCEPTED"
+        )
         self.add_taxon_to_taxon_group(taxonomy, taxon_group, validated=auto_validate)
 
         if harvest_synonyms and not is_synonym:
