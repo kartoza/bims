@@ -46,14 +46,27 @@ class TaxonWorksTaxaProcessor(TaxaProcessor):
     def finish_processing_row(self, row, taxonomy):
         pass
 
+    def _accepted_rank(self, record: dict) -> str | None:
+        """Rank of the accepted name *record* points to, if it is another record."""
+        valid_id = record.get("cached_valid_taxon_name_id")
+        record_id = record.get("id")
+        if not (valid_id and record_id and int(valid_id) != int(record_id)):
+            return None
+        accepted_record = self._fetch_record(int(valid_id))
+        return ((accepted_record or {}).get("rank") or "").strip().upper() or None
+
     def _infer_rank(self, record: dict) -> str | None:
         # Without a `name` (the record's own name element) there is no
         # structured signal to infer a rank from - guessing purely from the
         # word count of the cached display string is unreliable (e.g. a
-        # trinomial isn't necessarily a SUBSPECIES). Treat these as unknown
-        # rank rather than silently minting one.
+        # trinomial isn't necessarily a SUBSPECIES). These rankless names are
+        # subsequent combinations (nomenclatural history): when one is linked
+        # to an accepted name it is taken over as a synonym with that rank,
+        # otherwise it is treated as unknown rank rather than minting one.
         if not record.get("name"):
-            return None
+            if not (record.get("cached") or "").strip():
+                return None
+            return self._accepted_rank(record)
 
         cached = (record.get("cached") or "").strip()
         if not cached:
@@ -64,13 +77,9 @@ class TaxonWorksTaxaProcessor(TaxaProcessor):
         if token_count == 2:
             return "SPECIES"
         if token_count == 1:
-            valid_id = record.get("cached_valid_taxon_name_id")
-            record_id = record.get("id")
-            if valid_id and record_id and int(valid_id) != int(record_id):
-                accepted_record = self._fetch_record(int(valid_id))
-                accepted_rank = ((accepted_record or {}).get("rank") or "").strip().upper() or None
-                if accepted_rank:
-                    return accepted_rank
+            accepted_rank = self._accepted_rank(record)
+            if accepted_rank:
+                return accepted_rank
             parent_record = self._fetch_record(record.get("parent_id"))
             parent_rank = ((parent_record or {}).get("rank") or "").strip().upper() or None
             if parent_rank == "FAMILY":

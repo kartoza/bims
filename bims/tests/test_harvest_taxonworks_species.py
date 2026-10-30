@@ -326,6 +326,39 @@ class TestHarvestTaxonWorksSpeciesTask(FastTenantTestCase):
         )
         self.assertEqual(synonym_taxon.accepted_taxonomy.rank, 'SUBSPECIES')
 
+    @mock.patch(_PATCH_PREFS)
+    @mock.patch(_PATCH_SLEEP, return_value=None)
+    @mock.patch(_PATCH_HTTP_GET)
+    @mock.patch(_PATCH_CONNECT)
+    @mock.patch(_PATCH_DISCONNECT)
+    def test_rankless_combination_linked_to_accepted_becomes_synonym(
+        self, mock_dis, mock_con, mock_http_get, mock_sleep, mock_prefs
+    ):
+        mock_prefs.SiteSetting.auto_validate_taxa_on_upload = True
+        root = _record(100, 'Plecoptera', 'order', parent_id=10)
+        genus = _record(110, 'Neophron', 'genus', parent_id=100)
+        accepted = _record(112, 'Neophron percnopterus', 'species', parent_id=110)
+        combination = _record(113, 'Vultur percnopterus', None, parent_id=110,
+                              valid=False, valid_id=112)
+        combination['name'] = None
+        combination['type'] = 'Combination'
+        orphan = _record(114, 'Gyps unknownus', None, parent_id=110, valid=False)
+        orphan['name'] = None
+        orphan['type'] = 'Combination'
+        mock_http_get.side_effect = self._mock_http_get(
+            [[root, genus, accepted, combination, orphan]]
+        )
+
+        session = self._make_session()
+        harvest_taxonworks_species(session.id, schema_name=self.schema_name)
+
+        syn = Taxonomy.objects.get(canonical_name='Vultur percnopterus')
+        self.assertEqual(syn.rank, 'SPECIES')
+        self.assertEqual(syn.taxonomic_status, 'SYNONYM')
+        self.assertEqual(syn.accepted_taxonomy.canonical_name, 'Neophron percnopterus')
+        # Rankless and not connected to an accepted name: still skipped
+        self.assertFalse(Taxonomy.objects.filter(canonical_name='Gyps unknownus').exists())
+
     # ------------------------------------------------------------------
     # OTU ID is stored on Taxonomy
     # ------------------------------------------------------------------
