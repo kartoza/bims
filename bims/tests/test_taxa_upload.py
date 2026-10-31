@@ -1957,3 +1957,65 @@ class TestFadaDoubtfulAndAutonymUpload(FastTenantTestCase):
                 for fada_id in ('SYN-500434', 'SYN-34690'):
                     syn = Taxonomy.objects.get(fada_id=fada_id)
                     self.assertEqual(syn.accepted_taxonomy.fada_id, '83959')
+
+
+class TestPartimAddendumUpload(FastTenantTestCase):
+    """End-to-end CSV upload of the 'partim' addendum."""
+
+    _CSV_CANONICAL_NAMES = [
+        'Aquanothrus montanus',
+        'Aquanothrus vexans',
+        'Aquanothrus capensis',
+        'Aquanothrus',
+        'Anisitsiellidae',
+        'Trombidiformes',
+        'Arachnida',
+        'Arthropoda',
+        'Animalia',
+    ]
+
+    def _delete_csv_taxa(self):
+        Taxonomy.objects.filter(
+            canonical_name__in=self._CSV_CANONICAL_NAMES
+        ).delete()
+
+    def setUp(self):
+        self._delete_csv_taxa()
+        self.taxon_group = TaxonGroupF.create()
+        self.owner = UserF.create(first_name='tester')
+        for key in ('indigenous', 'alien', 'unknown', 'alien-invasive', 'alien-non-invasive'):
+            TaxonOrigin.objects.get_or_create(
+                origin_key=key, defaults={'category': key})
+
+    def tearDown(self):
+        self._delete_csv_taxa()
+
+    @mock.patch('bims.scripts.data_upload.DataCSVUpload.finish')
+    @mock.patch('bims.scripts.taxa_upload.fetch_all_species_from_gbif')
+    def test_partim_from_column_and_name_is_stored(self, mock_gbif, mock_finish):
+        mock_finish.return_value = None
+        mock_gbif.return_value = None
+
+        with open(os.path.join(test_data_directory, 'taxa_upload_partim.csv'), 'rb') as f:
+            upload_session = UploadSessionF.create(
+                uploader=self.owner,
+                process_file=File(f),
+                module_group=self.taxon_group,
+            )
+        taxa_csv_upload = TaxaCSVUpload()
+        taxa_csv_upload.upload_session = upload_session
+        taxa_csv_upload.start('utf-8-sig')
+
+        # Addendum column value, any capitalisation
+        self.assertEqual(
+            Taxonomy.objects.get(canonical_name='Aquanothrus montanus').addendum,
+            TaxonAddendum.PARTIM.name,
+        )
+        # Trailing 'partim' in the taxon name is stripped into the addendum
+        self.assertEqual(
+            Taxonomy.objects.get(canonical_name='Aquanothrus vexans').addendum,
+            TaxonAddendum.PARTIM.name,
+        )
+        # Rows without it are unaffected
+        self.assertEqual(
+            Taxonomy.objects.get(canonical_name='Aquanothrus capensis').addendum, '')

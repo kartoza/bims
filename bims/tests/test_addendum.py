@@ -1,5 +1,7 @@
 from django.contrib.auth import get_user_model
+from django.urls import reverse
 from django_tenants.test.cases import FastTenantTestCase
+from django_tenants.test.client import TenantClient
 
 from bims.api_views.taxon_update import (
     create_taxon_proposal,
@@ -38,6 +40,29 @@ class TestAddendumHelpers(FastTenantTestCase):
         self.assertEqual(
             get_addendum_display(TaxonAddendum.SENSU_LATO.name, abbreviate=False),
             'sensu lato'
+        )
+
+    def test_partim_display_is_full_word(self):
+        self.assertEqual(
+            get_addendum_display(TaxonAddendum.PARTIM.name, abbreviate=True),
+            'partim',
+        )
+        self.assertEqual(
+            get_addendum_display(TaxonAddendum.PARTIM.name, abbreviate=False),
+            'partim',
+        )
+
+    def test_partim_resolved_and_stripped_from_name(self):
+        self.assertEqual(resolve_addendum_code('Partim'), TaxonAddendum.PARTIM.name)
+        self.assertEqual(
+            strip_addendum_from_name('Aquanothrus montanus partim'),
+            ('Aquanothrus montanus', TaxonAddendum.PARTIM.name),
+        )
+        self.assertEqual(
+            build_name_with_addendum(
+                'Aquanothrus montanus', 'Engelbrecht, 1975',
+                TaxonAddendum.PARTIM.name),
+            'Aquanothrus montanus partim Engelbrecht, 1975',
         )
 
     def test_get_addendum_display_empty_code(self):
@@ -263,5 +288,95 @@ class TestAddendumProposalLifecycle(FastTenantTestCase):
         )
         proposal.approve(self.superuser, suppress_emails=True)
 
+        self.taxon.refresh_from_db()
+        self.assertEqual(self.taxon.addendum, '')
+
+
+class TestPartimEditFlow(FastTenantTestCase):
+    """Edit form -> proposal -> approval -> serialized output for 'partim'."""
+
+    def setUp(self):
+        self.client = TenantClient(self.tenant)
+        self.superuser = User.objects.create_user(
+            username='superuser', email='superuser@example.com',
+            password='password', is_superuser=True)
+        self.parent = TaxonomyF.create(rank='GENUS', canonical_name='Aquanothrus')
+        self.taxon = TaxonomyF.create(
+            scientific_name='Aquanothrus montanus Engelbrecht, 1975',
+            canonical_name='Aquanothrus montanus',
+            author='Engelbrecht, 1975',
+            rank='SPECIES',
+            parent=self.parent,
+        )
+        self.taxon_group = TaxonGroupF.create(
+            name='Partim Group', taxonomies=(self.taxon,))
+        self.client.login(username='superuser', password='password')
+
+    def _edit_url(self):
+        return reverse('edit_taxon', kwargs={
+            'id': self.taxon.id, 'taxon_group_id': self.taxon_group.id})
+
+    def test_edit_form_offers_partim_option(self):
+        response = self.client.get(self._edit_url())
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, '<option value="PARTIM"')
+        self.assertContains(response, '<option value="SENSU_LATO"')
+
+    def test_set_partim_via_edit_form_then_approve(self):
+        response = self.client.post(self._edit_url(), {
+            'taxon_name': 'Aquanothrus montanus',
+            'rank': 'SPECIES',
+            'author': 'Engelbrecht, 1975',
+            'taxonomic_status': 'ACCEPTED',
+            'accepted_taxonomy': '',
+            'tags': [],
+            'parent': self.parent.id,
+            'addendum': TaxonAddendum.PARTIM.name,
+        })
+        self.assertEqual(response.status_code, 302)
+
+        proposal = TaxonomyUpdateProposal.objects.get(
+            original_taxonomy=self.taxon, status='pending')
+        self.assertEqual(proposal.addendum, TaxonAddendum.PARTIM.name)
+
+        # Not applied to the live taxon until the proposal is approved
+        self.taxon.refresh_from_db()
+        self.assertEqual(self.taxon.addendum, '')
+
+        proposal.approve(self.superuser, suppress_emails=True)
+        self.taxon.refresh_from_db()
+        self.assertEqual(self.taxon.addendum, TaxonAddendum.PARTIM.name)
+
+        # Shown as the full word in every output
+        expected = 'Aquanothrus montanus partim Engelbrecht, 1975'
+        self.assertEqual(
+            ChecklistSerializer(self.taxon).data['scientific_name'], expected)
+        self.assertEqual(
+            ChecklistPDFSerializer(self.taxon).data['scientific_name'], expected)
+        csv_data = TaxaCSVSerializer(self.taxon).data
+        self.assertEqual(csv_data['scientific_name_and_authority'], expected)
+        self.assertEqual(csv_data['addendum'], 'partim')
+        self.assertEqual(
+            ColDPTaxonSerializer(self.taxon).data['namePhrase'], 'partim')
+        self.assertEqual(
+            TaxonSerializer(self.taxon, context={'validated': True}).data['addendum'],
+            'partim')
+
+    def test_clearing_addendum_via_edit_form(self):
+        self.taxon.addendum = TaxonAddendum.PARTIM.name
+        self.taxon.save()
+        self.client.post(self._edit_url(), {
+            'taxon_name': 'Aquanothrus montanus',
+            'rank': 'SPECIES',
+            'author': 'Engelbrecht, 1975',
+            'taxonomic_status': 'ACCEPTED',
+            'accepted_taxonomy': '',
+            'tags': [],
+            'parent': self.parent.id,
+            'addendum': '',
+        })
+        proposal = TaxonomyUpdateProposal.objects.get(
+            original_taxonomy=self.taxon, status='pending')
+        proposal.approve(self.superuser, suppress_emails=True)
         self.taxon.refresh_from_db()
         self.assertEqual(self.taxon.addendum, '')

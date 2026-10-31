@@ -4,10 +4,12 @@ from bims.enums.taxon_addendum import TaxonAddendum
 
 ADDENDUM_ABBREVIATIONS = {
     TaxonAddendum.SENSU_LATO.name: 's.l.',
+    TaxonAddendum.PARTIM.name: 'partim',
 }
 
 ADDENDUM_FULL_TEXT = {
     TaxonAddendum.SENSU_LATO.name: TaxonAddendum.SENSU_LATO.value,
+    TaxonAddendum.PARTIM.name: TaxonAddendum.PARTIM.value,
 }
 
 
@@ -49,7 +51,7 @@ def _addendum_name_pattern(addendum: TaxonAddendum) -> str:
     (e.g. 's.l.', 's. l.', 's l', 'sl' for SENSU_LATO)"""
     alternatives = [_re.escape(addendum.value)]
     abbreviation = ADDENDUM_ABBREVIATIONS.get(addendum.name)
-    if abbreviation:
+    if abbreviation and abbreviation.lower() != addendum.value.lower():
         letters = [c for c in abbreviation if c.isalpha()]
         alternatives.append(r'\.?\s*'.join(letters) + r'\.?')
     return '|'.join(alternatives)
