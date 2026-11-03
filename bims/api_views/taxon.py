@@ -393,6 +393,9 @@ class AddNewTaxon(LoginRequiredMixin, APIView):
         subgenus_id = self.request.POST.get('subgenusId', None)
         taxonomic_status = (self.request.POST.get('taxonomicStatus') or '').strip().upper()
         is_synonym = 'SYNONYM' in taxonomic_status
+        confirm_duplicate = (
+            self.request.POST.get('confirmDuplicate') or ''
+        ).lower() in ('1', 'true')
         parent = None
 
         if family_id:
@@ -427,30 +430,56 @@ class AddNewTaxon(LoginRequiredMixin, APIView):
 
             taxon_name = taxon_name.strip()
 
-            duplicate_qs = Taxonomy.objects.filter(
+            duplicates = list(Taxonomy.objects.filter(
                 canonical_name__iexact=taxon_name,
                 parent=parent,
-            )
-            if duplicate_qs.exists():
+            ))
+            submitted_author = (author_name or '').strip().lower()
+            if submitted_author and any(
+                (d.author or '').strip().lower() == submitted_author
+                for d in duplicates
+            ):
                 return Response(
-                    {'error': f'A taxon named "{taxon_name}" already exists under the same parent.'},
+                    {'error': f'A taxon named "{taxon_name}" with the same author '
+                              f'already exists under the same parent.'},
                     status=status.HTTP_400_BAD_REQUEST,
+                )
+            if duplicates and not confirm_duplicate:
+                # Homonyms differ only by author, so let the user decide.
+                authors = sorted({d.author for d in duplicates if d.author})
+                existing = f' (author: {", ".join(authors)})' if authors else ' (no author)'
+                return Response(
+                    {
+                        'error': f'A taxon named "{taxon_name}" already exists '
+                                 f'under the same parent{existing}.',
+                        'duplicate': True,
+                        'existing_authors': authors,
+                    },
+                    status=status.HTTP_409_CONFLICT,
                 )
 
             try:
-                taxonomy, created = Taxonomy.objects.get_or_create(
-                    scientific_name=taxon_name,
-                    canonical_name=taxon_name,
-                    rank=rank,
-                    parent=parent,
-                )
+                if duplicates:
+                    taxonomy = Taxonomy.objects.create(
+                        scientific_name=taxon_name,
+                        canonical_name=taxon_name,
+                        rank=rank,
+                        parent=parent,
+                    )
+                else:
+                    taxonomy, created = Taxonomy.objects.get_or_create(
+                        scientific_name=taxon_name,
+                        canonical_name=taxon_name,
+                        rank=rank,
+                        parent=parent,
+                    )
             except IntegrityError:
-                taxonomy = Taxonomy.objects.get(
+                taxonomy = Taxonomy.objects.filter(
                     scientific_name=taxon_name,
                     canonical_name=taxon_name,
                     rank=rank,
                     parent=parent,
-                )
+                ).first()
 
         if taxon_group_id:
             taxon_group = TaxonGroup.objects.get(id=taxon_group_id)
