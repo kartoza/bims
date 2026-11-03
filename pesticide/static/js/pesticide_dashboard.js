@@ -93,7 +93,7 @@ class RiskChart {
     }
     createChart() {
         const that = this;
-        const highChartsData = Object.entries(this.pesticideRisk).map(([name, risk]) => {
+        const riskData = Object.entries(this.pesticideRisk).map(([name, risk]) => {
             return {
                 name: Object.keys(riskModules).find(key => riskModules[key] === name),
                 color: this.colorMapping[risk],
@@ -101,43 +101,41 @@ class RiskChart {
             };
         });
 
-        Highcharts.chart(this.containerId, {
-            chart: {
-                type: 'column',
+        const container = document.getElementById(this.containerId);
+        if (this.chart) {
+            this.chart.destroy();
+        }
+        container.innerHTML = '<div style="position: relative; height: 400px;"><canvas></canvas></div>';
+
+        this.chart = new Chart(container.querySelector('canvas'), {
+            type: 'bar',
+            data: {
+                labels: ['Fish', 'Invertebrates', 'Algae'],
+                datasets: [{
+                    data: riskData.map(item => item.y),
+                    backgroundColor: riskData.map(item => item.color),
+                    categoryPercentage: 1,
+                    barPercentage: 0.8,
+                }],
             },
-            title: {
-                text: '',
-            },
-            xAxis: {
-                categories: ['Fish', 'Invertebrates', 'Algae'],
-            },
-            yAxis: {
-                min: 0,
-                max: 6,
-                tickInterval: 1,
-                labels: {
-                    // Custom formatter function for yAxis labels
-                    formatter: function () {
-                        return that.RISKS[this.value];
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: false,
+                scales: {
+                    x: {grid: {display: false}},
+                    y: {
+                        min: 0,
+                        max: 6,
+                        ticks: {
+                            stepSize: 1,
+                            callback: value => that.RISKS[value],
+                        },
                     },
                 },
-                title: {
-                    text: '',
-                },
-            },
-            series: [
-                {
-                    showInLegend: false,
-                    data: highChartsData,
-                },
-            ],
-            tooltip: {
-                enabled: false,
-            },
-            plotOptions: {
-                series: {
-                    groupPadding: 0,
-                    pointPadding: 0.1,
+                plugins: {
+                    legend: {display: false},
+                    tooltip: {enabled: false},
                 },
             },
         });
