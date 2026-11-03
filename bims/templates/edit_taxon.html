@@ -174,7 +174,7 @@
                     <input type="text" name="taxon_name" id="taxon_name"
                            class="form-control form-control-sm"
                            placeholder=""
-                           value="{% if tax_status_upper == 'DOUBTFUL' or 'SYNONYM' in tax_status_upper %}{% if object.canonical_name %}{{ object.canonical_name }}{% else %}{{ object.scientific_name }}{% endif %}{% elif object.rank == 'SUBSPECIES' %}{{ hierarchy_taxon.sub_species_name|default:object.sub_species_name }}{% elif object.rank == 'SPECIES' %}{{ hierarchy_taxon.specific_epithet|default:object.specific_epithet }}{% elif object.canonical_name %}{{ object.canonical_name }}{% else %}{{ object.scientific_name }}{% endif %}" >
+                           value="{% if 'SYNONYM' in tax_status_upper %}{% if object.canonical_name %}{{ object.canonical_name }}{% else %}{{ object.scientific_name }}{% endif %}{% elif object.rank == 'SUBSPECIES' %}{{ hierarchy_taxon.sub_species_name|default:object.sub_species_name }}{% elif object.rank == 'SPECIES' %}{{ hierarchy_taxon.specific_epithet|default:object.specific_epithet }}{% elif object.canonical_name %}{{ object.canonical_name }}{% else %}{{ object.scientific_name }}{% endif %}" >
                     {% endwith %}
                 </div>
             </div>

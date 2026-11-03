@@ -158,9 +158,8 @@ $('.species-group-auto-complete').on('select2:clear', function () {
 //   });
 // });
 
-function isSynonymOrDoubtfulStatus(status) {
-    const normalized = (status || '').toUpperCase();
-    return normalized === 'DOUBTFUL' || normalized.indexOf('SYNONYM') > -1;
+function isSynonymStatus(status) {
+    return (status || '').toUpperCase().indexOf('SYNONYM') > -1;
 }
 
 document.addEventListener('DOMContentLoaded', function() {
@@ -171,7 +170,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const parentTaxonSelect = document.getElementById('parent-taxon');
 
     function computeHierarchyTarget() {
-        const shouldUseAccepted = isSynonymOrDoubtfulStatus(taxonomicStatus.value) && acceptedTaxonomyId;
+        const shouldUseAccepted = isSynonymStatus(taxonomicStatus.value) && acceptedTaxonomyId;
         return shouldUseAccepted ? acceptedTaxonomyId : taxonId;
     }
 
@@ -181,7 +180,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function toggleStatusFields() {
-        const shouldHideParent = isSynonymOrDoubtfulStatus(taxonomicStatus.value);
+        const shouldHideParent = isSynonymStatus(taxonomicStatus.value);
         acceptedTaxonField.style.display = shouldHideParent ? 'flex' : 'none';
         if (subgenusField) {
             subgenusField.style.display = shouldHideParent ? 'flex' : 'none';
@@ -206,7 +205,7 @@ document.addEventListener('DOMContentLoaded', function() {
         refreshHierarchyTree();
     });
 
-    if (parent && !isSynonymOrDoubtfulStatus(taxonomicStatus.value)) {
+    if (parent && !isSynonymStatus(taxonomicStatus.value)) {
         let option = new Option(parent, parentId, true, true);
         let parentTaxon = $('#parent-taxon');
         parentTaxon.append(option).trigger('change');
