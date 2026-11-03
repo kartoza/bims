@@ -44,22 +44,75 @@ SNAPSHOT_FIXED_HEADERS = [
     'on_gbif', 'gbif_link', 'fada_id', 'cites_listing',
 ]
 
-SNAPSHOT_HEADER_LABELS = {
-    'class_name': CLASS,
-    'taxon_rank': TAXON_RANK,
-    'taxon': 'Taxon',
-    'scientific_name_and_authority': 'Scientific Name And Authority',
-    'author': 'Authors',
-    'accepted_taxon': 'Accepted Taxon',
-    'common_name': 'Common Name',
-    'conservation_status_global': 'Conservation Status Global',
-    'conservation_status_national': 'Conservation Status National',
-    'on_gbif': 'On GBIF',
-    'gbif_link': 'GBIF Link',
-    'fada_id': 'FADA ID',
-    'cites_listing': 'CITES Listing',
-    'species_group': 'Species Group',
-}
+def format_taxa_csv_headers(
+        _headers, tag_titles=(), additional_attributes_titles=()):
+    """Turn serializer keys into the column labels used by taxa CSV exports."""
+    from preferences import preferences
+    from bims.fada.taxa_list import FADA_ADDITIONAL_KEYS
+
+    header_map = {
+        'class_name': CLASS,
+        'taxon_rank': TAXON_RANK,
+        'common_name': COMMON_NAME,
+        'accepted_taxon': ACCEPTED_TAXON,
+        'fada_id': FADA_ID,
+        'species_group': SPECIES_GROUP,
+        'subgenus': SUBGENUS,
+        'subtribe': SUBTRIBE,
+        'subfamily': SUBFAMILY,
+        'suborder': SUBORDER,
+        'subclass': SUBCLASS,
+        'subphylum': SUBPHYLUM,
+        'subspecies': SUBSPECIES,
+        'species': SPECIES,
+        'addendum': 'Addendum',
+        'genus': GENUS,
+        'tribe': TRIBE,
+        'family': FAMILY,
+        'order': ORDER,
+        'phylum': PHYLUM,
+        'kingdom': KINGDOM,
+        'cites_listing': CITES_LISTING,
+        'author': AUTHORS,
+        'taxonomic_status': 'Taxonomic Status',
+    }
+
+    _updated_headers = []
+    for header in _headers:
+        if header in FADA_ADDITIONAL_KEYS:
+            _updated_headers.append(header)
+            continue
+        original = header
+
+        if header.lower() in header_map:
+            header = header_map[header.lower()]
+            _updated_headers.append(header)
+            continue
+
+        if header.lower().strip() in ['on_gbif', 'on gbif']:
+            header = ON_GBIF
+            _updated_headers.append(header)
+            continue
+        elif header.lower().strip() in ['gbif_link', 'gbif link']:
+            header = GBIF_LINK
+            _updated_headers.append(header)
+            continue
+        elif header.lower().strip() == 'invasion':
+            header = preferences.SiteSetting.invasion_label or 'Invasion'
+            _updated_headers.append(header)
+            continue
+
+        header = header.replace('_or_', '/')
+
+        if (
+            not header.istitle()
+            and original not in tag_titles
+            and original not in additional_attributes_titles
+        ):
+            header = header.replace('_', ' ').capitalize()
+
+        _updated_headers.append(header)
+    return _updated_headers
 
 
 def process_download_csv_taxa_list(
@@ -75,7 +128,6 @@ def process_download_csv_taxa_list(
     from django.contrib.auth import get_user_model
     from django.conf import settings
 
-    from preferences import preferences
     from bims.api_views.taxon import TaxaList
     from bims.views.download_csv_taxa_list import (
         TaxaCSVSerializer,
@@ -167,69 +219,8 @@ def process_download_csv_taxa_list(
     additional_attributes_titles = set()
 
     def update_headers(_headers):
-        header_map = {
-            'class_name': CLASS,
-            'taxon_rank': TAXON_RANK,
-            'common_name': COMMON_NAME,
-            'accepted_taxon': ACCEPTED_TAXON,
-            'fada_id': FADA_ID,
-            'species_group': SPECIES_GROUP,
-            'subgenus': SUBGENUS,
-            'subtribe': SUBTRIBE,
-            'subfamily': SUBFAMILY,
-            'suborder': SUBORDER,
-            'subclass': SUBCLASS,
-            'subphylum': SUBPHYLUM,
-            'subspecies': SUBSPECIES,
-            'species': SPECIES,
-            'addendum': 'Addendum',
-            'genus': GENUS,
-            'tribe': TRIBE,
-            'family': FAMILY,
-            'order': ORDER,
-            'phylum': PHYLUM,
-            'kingdom': KINGDOM,
-            'cites_listing': CITES_LISTING,
-            'author': AUTHORS,
-            'taxonomic_status': 'Taxonomic Status',
-        }
-
-        _updated_headers = []
-        for header in _headers:
-            if header in FADA_ADDITIONAL_KEYS:
-                _updated_headers.append(header)
-                continue
-            original = header
-
-            if header.lower() in header_map:
-                header = header_map[header.lower()]
-                _updated_headers.append(header)
-                continue
-
-            if header.lower().strip() in ['on_gbif', 'on gbif']:
-                header = ON_GBIF
-                _updated_headers.append(header)
-                continue
-            elif header.lower().strip() in ['gbif_link', 'gbif link']:
-                header = GBIF_LINK
-                _updated_headers.append(header)
-                continue
-            elif header.lower().strip() == 'invasion':
-                header = preferences.SiteSetting.invasion_label or 'Invasion'
-                _updated_headers.append(header)
-                continue
-
-            header = header.replace('_or_', '/')
-
-            if (
-                not header.istitle()
-                and original not in tag_titles
-                and original not in additional_attributes_titles
-            ):
-                header = header.replace('_', ' ').capitalize()
-
-            _updated_headers.append(header)
-        return _updated_headers
+        return format_taxa_csv_headers(
+            _headers, tag_titles, additional_attributes_titles)
 
     raw_headers = []
     has_addendum = False
@@ -689,9 +680,11 @@ def download_taxa_list(
 
 
 def _snapshot_row_to_dict(row):
-    on_gbif = 'Yes' if row.gbif_key or row.col_id else 'No'
-    if row.col_id:
-        gbif_link = f'https://www.gbif.org/taxon/{row.col_id}'
+    # Snapshots only keep the GBIF key, so there is no col_id to read.
+    col_id = getattr(row, 'col_id', '')
+    on_gbif = 'Yes' if row.gbif_key or col_id else 'No'
+    if col_id:
+        gbif_link = f'https://www.gbif.org/taxon/{col_id}'
     elif row.gbif_key:
         gbif_link = f'https://www.gbif.org/species/{row.gbif_key}'
     else:
@@ -755,13 +748,27 @@ def write_snapshot_pdf(snapshots, version, output_file, order_by=None):
     ).exclude(taxonomic_status__icontains='synonym').order_by('scientific_name')
 
     group_key = 'family' if order_by == 'family' else 'genus'
+    group_authors = {}
+    for name, author in Taxonomy.objects.filter(
+        rank=group_key.upper(),
+        canonical_name__in=set(
+            accepted.exclude(**{group_key: ''}).values_list(group_key, flat=True)
+        ),
+    ).exclude(author__isnull=True).exclude(author='').values_list(
+        'canonical_name', 'author'
+    ):
+        group_authors.setdefault(name, author)
     groups = OrderedDict()
     for s in accepted:
         key_name = (s.family if group_key == 'family' else s.genus) or ''
         if not key_name:
             continue
         group = groups.setdefault(
-            key_name, {'name': key_name, 'author': '', 'species': []}
+            key_name, {
+                'name': key_name,
+                'author': group_authors.get(key_name, ''),
+                'species': [],
+            }
         )
         group['species'].append({
             'canonical_name': _snapshot_display_name(s),
@@ -791,29 +798,55 @@ def write_snapshot_csv(snapshots, output_file, order_by=None, version=None):
     else:
         snapshots = snapshots.order_by('genus', 'canonical_name')
 
+    from bims.models import TaxonExtraAttribute
+    from bims.scripts.species_keys import BIOGRAPHIC_DISTRIBUTIONS
+    from bims.fada.taxa_list import (
+        FADA_ADDITIONAL_KEYS,
+        reorder_headers_for_fada,
+    )
+
+    is_fada = is_fada_site()
+
     extra_attr_keys = []
+    if version is not None:
+        extra_attr_keys = [
+            name for name in TaxonExtraAttribute.objects.filter(
+                taxon_group=version.taxon_group
+            ).values_list('name', flat=True)
+            if name.lower().strip() != 'cites listing'
+        ]
     tag_keys = []
-    for row in snapshots.only('additional_data', 'tags').iterator(chunk_size=2000):
-        for k in (row.additional_data or {}):
-            if k not in extra_attr_keys:
-                extra_attr_keys.append(k)
-        for k in (row.tags or {}):
+    for tags in snapshots.values_list('tags', flat=True).iterator(chunk_size=2000):
+        for k in (tags or {}):
             if k not in tag_keys:
                 tag_keys.append(k)
+    for k in BIOGRAPHIC_DISTRIBUTIONS:
+        if k not in tag_keys:
+            tag_keys.append(k)
 
-    all_keys = SNAPSHOT_FIXED_HEADERS + extra_attr_keys + tag_keys
-    headers = [
-        SNAPSHOT_HEADER_LABELS.get(k, k.replace('_', ' ').capitalize())
-        for k in all_keys
-    ]
+    all_keys = list(SNAPSHOT_FIXED_HEADERS)
+    for k in extra_attr_keys + tag_keys:
+        if k not in all_keys:
+            all_keys.append(k)
+    if is_fada:
+        for k in FADA_ADDITIONAL_KEYS:
+            if k not in all_keys:
+                all_keys.append(k)
+        all_keys = reorder_headers_for_fada(all_keys)
+    headers = format_taxa_csv_headers(
+        all_keys,
+        tag_titles=set(tag_keys),
+        additional_attributes_titles=set(extra_attr_keys),
+    )
 
     with open(output_file, 'w', newline='', encoding='utf-8') as f:
         writer = csv.writer(f, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
         writer.writerow(headers)
         for row in snapshots.iterator(chunk_size=2000):
             d = _snapshot_row_to_dict(row)
-            for k in extra_attr_keys:
-                d[k] = (row.additional_data or {}).get(k, '')
+            for k in all_keys:
+                if k not in d:
+                    d[k] = (row.additional_data or {}).get(k, '')
             for k in tag_keys:
                 d[k] = (row.tags or {}).get(k, '')
             writer.writerow([d.get(k, '') for k in all_keys])
