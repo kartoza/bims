@@ -222,7 +222,7 @@ dev = [
     "flake8==3.8.1",
     "pdbpp>=0.12.1",
     "pep8>=1.5.7,<1.6",
-    "pylint==3.0.3",
+    "pylint==4.0.9",
     "selenium==4.14.0",
     "watchdog>=3.0.0",
     "wrapt==1.16.0",
