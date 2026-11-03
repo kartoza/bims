@@ -17,167 +17,103 @@ function renderWaterTemperatureChart(){
       response => response.json()
     ).then((data =>{
 
-        for (let i = 0; i < data['date_time'].length; i++) {
-            const timestamp = new Date(data['date_time'][i]).getTime()
-            for (let dataKey in data) {
-                if (dataKey !== 'date_time' && dataKey !== 'days') {
-                    if (data[dataKey][i]) {
-                        data[dataKey][i] = [timestamp, data[dataKey][i]]
-                    }
-                }
-            }
-        }
-
-        Highcharts.Series.prototype.drawPoints = function() { };
-        const chartTitle = `Water Temperature - ${year}`
-        const chart = new Highcharts.stockChart('water-temperature', {
-            title: {
-                text: '',
-            },
-            xAxis: {
-                type: 'datetime',
-                ordinal: true,
-                title: {
-                    text: year
-                },
-                labels: {
-                    formatter: function () {
-                        return Highcharts.dateFormat('%b %y', this.value)
-                    },
-                }
-            },
-            yAxis: {
-                title: {
-                    text: 'Water Temperature (°C)'
-                }
-            },
-            plotOptions: {
-                series: {
-                    marker: {
-                        enabled: true, radius: 6
-                    }
-                }
-            },
-            legend: {
-                layout: 'horizontal',
-                enabled: true,
-                verticalAlign: 'top',
-                symbolWidth: 30,
-            },
-            exporting: {
-                filename: chartTitle,
-                menuItemDefinitions: {
-                    downloadPNG: {
-                        onclick: function () {
-                            let that = this;
-                            showDownloadPopup('CHART', chartTitle, function (downloadRequestId) {
-                                let svg = that.getSVG();
-                                let blob = new Blob([svg], {type: 'image/svg+xml'});
-                                uploadToDownloadRequest(downloadRequestId, blob, chartTitle + '.svg');
-                            })
-                        },
-                        text: 'Download PNG image'
-                    },
-                    downloadPDF: {
-                        onclick: function () {
-                            let that = this;
-                            showDownloadPopup('CHART', chartTitle, function (downloadRequestId) {
-                                let svg = that.getSVG();
-                                let blob = new Blob([svg], {type: 'image/svg+xml'});
-                                uploadToDownloadRequest(downloadRequestId, blob, chartTitle + '.svg');
-                            })
-                        },
-                        text: 'Download PDF image'
-                    },
-                    downloadSVG: {
-                        onclick: function () {
-                            let that = this;
-                            showDownloadPopup('CHART', chartTitle, function (downloadRequestId) {
-                                let svg = that.getSVG();
-                                let blob = new Blob([svg], {type: 'image/svg+xml'});
-                                uploadToDownloadRequest(downloadRequestId, blob, chartTitle + '.svg');
-                            })
-                        },
-                        text: 'Download SVG vector image'
-                    },
-                    downloadCSV2: {
-                        onclick: function () {
-                            let that = this;
-                            showDownloadPopup('TABLE', chartTitle, function (downloadRequestId) {
-                                let csv = that.getCSV();
-                                let blob = new Blob([csv], {type: 'text/csv'});
-                                uploadToDownloadRequest(downloadRequestId, blob, chartTitle + '.csv');
-                            })
-                        },
-                        text: 'Download CSV'
-                    },
-                },
-                buttons: {
-                    contextButton: {
-                        menuItems: [
-                            "downloadPNG",
-                            "downloadPDF",
-                            "downloadSVG",
-                            "separator",
-                            "downloadCSV2"]
-                    }
-                }
-            },
-            series: [
-                {
-                    name: 'Mean_7',
-                    data: data['mean_7'],
-                    color: '#000000'
-                },
-                {
-                    name: '95%_low',
-                    data: data['95%_low'],
-                    color: '#7f7f7f'
-                },
-                {
-                    name: '95%_up',
-                    data: data['95%_up'],
-                    color: '#7f7f7f'
-                },
-                {
-                    name: 'L95%_1SD',
-                    data: data['L95%_1SD'],
-                    color: '#bfbfbf'
-
-                },
-                {
-                    name: 'U95%_1SD',
-                    data: data['U95%_1SD'],
-                    color: '#bfbfbf'
-
-                },
-                {
-                    name: 'L95%_2SD',
-                    data: data['L95%_2SD'],
-                    color: '#bfbfbf'
-
-                },
-                {
-                    name: 'U95%_2SD',
-                    data: data['U95%_2SD'],
-                    color: '#bfbfbf'
-
-                },
-                {
-                    name: 'Min_7',
-                    data: data['min_7'],
-                    color: '#0070c0'
-                },
-                {
-                    name: 'Max_7',
-                    data: data['max_7'],
-                    color: '#ff0000'
-                }
-            ]
-        });
-        return chart
-
+        drawWaterTemperatureChart(data);
     }))
+}
+
+const WATER_TEMPERATURE_SERIES = [
+    {key: 'mean_7', label: 'Mean_7', color: '#000000'},
+    {key: '95%_low', label: '95%_low', color: '#7f7f7f'},
+    {key: '95%_up', label: '95%_up', color: '#7f7f7f'},
+    {key: 'L95%_1SD', label: 'L95%_1SD', color: '#bfbfbf'},
+    {key: 'U95%_1SD', label: 'U95%_1SD', color: '#bfbfbf'},
+    {key: 'L95%_2SD', label: 'L95%_2SD', color: '#bfbfbf'},
+    {key: 'U95%_2SD', label: 'U95%_2SD', color: '#bfbfbf'},
+    {key: 'min_7', label: 'Min_7', color: '#0070c0'},
+    {key: 'max_7', label: 'Max_7', color: '#ff0000'},
+];
+
+let waterTemperatureChart = null;
+
+// Chart look and behaviour shared with the other Chart.js charts lives in
+// js/utils/chartjs_highcharts_style.js (BimsChart).
+function drawWaterTemperatureChart(data) {
+    const container = document.getElementById('water-temperature');
+    container.innerHTML = (
+        '<div class="water-temperature-canvas-wrapper"><canvas></canvas></div>' +
+        '<div class="water-temperature-navigator-wrapper"><canvas></canvas></div>'
+    );
+    const [mainCanvas, navigatorCanvas] = container.querySelectorAll('canvas');
+
+    const chartTitle = `Water Temperature - ${year}`;
+    const labels = data['date_time'];
+    const toValue = v => (v === null || v === undefined || v === '') ? null : Number(v);
+    const tickLabels = BimsChart.monthTickLabels(labels);
+
+    if (waterTemperatureChart) {
+        waterTemperatureChart.destroy();
+    }
+
+    waterTemperatureChart = new Chart(mainCanvas, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: WATER_TEMPERATURE_SERIES.map((series, index) => BimsChart.styleDataset({
+                label: series.label,
+                data: (data[series.key] || []).map(toValue),
+            }, series.color, index)),
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: false,
+            interaction: {mode: 'index', intersect: false},
+            scales: {
+                x: BimsChart.monthAxisOptions(tickLabels, {
+                    title: {display: true, text: String(year)},
+                }),
+                y: {
+                    title: {display: true, text: 'Water Temperature (°C)'},
+                },
+            },
+            plugins: {
+                legend: BimsChart.legendOptions('top'),
+                tooltip: BimsChart.tooltipOptions({
+                    title: items => new Date(items[0].label).toLocaleDateString(
+                        'en-GB', {day: 'numeric', month: 'short', year: 'numeric'}),
+                    label: item => `${item.dataset.label}: ${item.parsed.y}`,
+                }),
+            },
+        },
+        plugins: [BimsChart.crosshairPlugin, BimsChart.whiteBackgroundPlugin],
+    });
+
+    const timeline = BimsChart.attachNavigator(waterTemperatureChart, navigatorCanvas, {
+        labels: labels,
+        tickLabels: tickLabels,
+        data: (data['mean_7'] || []).map(toValue),
+    });
+
+    $('#water-temperature-toolbar').show();
+    $('#water-temperature-toolbar .water-temperature-range').off('click').on('click', function () {
+        timeline.showLast(parseInt(this.getAttribute('data-days'), 10));
+    });
+    $('#water-temperature-toolbar .download-chart-png').off('click').on('click', function (e) {
+        e.preventDefault();
+        showDownloadPopup('CHART', chartTitle, function (downloadRequestId) {
+            waterTemperatureChart.canvas.toBlob(function (blob) {
+                uploadToDownloadRequest(downloadRequestId, blob, chartTitle + '.png');
+            }, 'image/png');
+        });
+    });
+    $('#water-temperature-toolbar .download-chart-csv').off('click').on('click', function (e) {
+        e.preventDefault();
+        showDownloadPopup('TABLE', chartTitle, function (downloadRequestId) {
+            const blob = new Blob(
+                [BimsChart.toCsv(waterTemperatureChart)], {type: 'text/csv'});
+            uploadToDownloadRequest(downloadRequestId, blob, chartTitle + '.csv');
+        });
+    });
 }
 
 function changeYear(selectObject) {
