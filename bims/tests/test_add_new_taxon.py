@@ -125,7 +125,8 @@ class AddNewTaxonTestCase(FastTenantTestCase):
     def test_reject_duplicate_taxon_same_name_same_parent(self):
         """
         When a manual taxon (no colId) with the same canonical_name and parent
-        already exists, the API should return 400 and not create a duplicate.
+        already exists, the API asks for confirmation (409) and does not create
+        a duplicate until the user confirms.
         """
         parent = TaxonomyF.create(
             canonical_name="Parent Genus",
@@ -147,8 +148,8 @@ class AddNewTaxonTestCase(FastTenantTestCase):
             "authorName": "Different Author",
         }
         response = self.client.post(reverse("add-new-taxon"), data)
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("error", response.data)
+        self.assertEqual(response.status_code, 409)
+        self.assertTrue(response.data["duplicate"])
         self.assertIn("already exists", response.data["error"])
 
         # No extra row created
@@ -162,7 +163,7 @@ class AddNewTaxonTestCase(FastTenantTestCase):
 
     def test_reject_duplicate_taxon_same_name_no_parent(self):
         """
-        When the same name is submitted twice with no parent, reject the second attempt.
+        When the same name is submitted twice with no parent, ask to confirm.
         """
         TaxonomyF.create(
             canonical_name="Orphan Duplicate",
@@ -178,8 +179,56 @@ class AddNewTaxonTestCase(FastTenantTestCase):
             "authorName": "Some Author",
         }
         response = self.client.post(reverse("add-new-taxon"), data)
-        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.status_code, 409)
         self.assertIn("error", response.data)
+
+    def _homonym_setup(self, author=None):
+        parent = TaxonomyF.create(
+            canonical_name="Homonym Genus",
+            scientific_name="Homonym Genus",
+            rank="genus",
+        )
+        existing = TaxonomyF.create(
+            canonical_name="Homonym Genus danica",
+            scientific_name="Homonym Genus danica",
+            rank="species",
+            parent=parent,
+            author=author or "",
+        )
+        data = {
+            "taxonName": "Homonym Genus danica",
+            "taxonGroup": self.taxon_group.name,
+            "rank": "species",
+            "parentId": parent.id,
+        }
+        return parent, existing, data
+
+    def test_duplicate_without_author_warns_then_allows_on_confirm(self):
+        parent, existing, data = self._homonym_setup()
+        response = self.client.post(reverse("add-new-taxon"), data)
+        self.assertEqual(response.status_code, 409)
+
+        data["confirmDuplicate"] = "true"
+        data["authorName"] = "Linnaeus, 1758"
+        response = self.client.post(reverse("add-new-taxon"), data)
+        self.assertEqual(response.status_code, 200)
+        self.assertNotEqual(response.data["id"], existing.id)
+        existing.refresh_from_db()
+        self.assertFalse(existing.author)
+        self.assertEqual(
+            Taxonomy.objects.filter(
+                canonical_name__iexact="Homonym Genus danica", parent=parent
+            ).count(),
+            2,
+        )
+
+    def test_duplicate_with_same_author_is_always_rejected(self):
+        _, _, data = self._homonym_setup(author="Linnaeus, 1758")
+        data["authorName"] = "linnaeus, 1758"
+        data["confirmDuplicate"] = "true"
+        response = self.client.post(reverse("add-new-taxon"), data)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("same author", response.data["error"])
 
     def test_allow_same_name_different_parent(self):
         """

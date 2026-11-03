@@ -124,26 +124,42 @@ export const addNewTaxon = (() => {
         loading.show();
 
         if (!taxaId) {
-            $.ajax({
-                url: '/api/add-new-taxon/',
-                type: 'POST',
-                headers: {"X-CSRFToken": csrfToken},
-                data: postData,
-                success: function (response) {
-                    insertParam('validated', 'False', false, true);
-                },
-                error: function (xhr) {
-                    loading.hide();
-                    table.show();
-                    let msg = 'Failed to add taxon.';
-                    try {
-                        const resp = JSON.parse(xhr.responseText);
-                        if (resp.error) msg = resp.error;
-                    } catch (e) {}
-                    alert(msg);
-                    $taxonForm.show();
-                }
-            });
+            const submitNewTaxon = function () {
+                $.ajax({
+                    url: '/api/add-new-taxon/',
+                    type: 'POST',
+                    headers: {"X-CSRFToken": csrfToken},
+                    data: postData,
+                    success: function (response) {
+                        insertParam('validated', 'False', false, true);
+                    },
+                    error: function (xhr) {
+                        loading.hide();
+                        table.show();
+                        let msg = 'Failed to add taxon.';
+                        let resp = {};
+                        try {
+                            resp = JSON.parse(xhr.responseText);
+                            if (resp.error) msg = resp.error;
+                        } catch (e) {}
+                        if (xhr.status === 409 && resp.duplicate) {
+                            // Same name and parent but a different author may be
+                            // a genuine homonym, so let the user confirm.
+                            if (confirm(`${msg}\n\nAdd it anyway as a separate taxon?`)) {
+                                postData['confirmDuplicate'] = true;
+                                loading.show();
+                                table.hide();
+                                submitNewTaxon();
+                                return;
+                            }
+                        } else {
+                            alert(msg);
+                        }
+                        $taxonForm.show();
+                    }
+                });
+            };
+            submitNewTaxon();
             return;
         }
         loading.hide();
