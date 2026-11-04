@@ -88,7 +88,7 @@ def bucket_readings(queryset, granularity):
 def build_chart_payload(queryset):
     """Chart data for every granularity.
 
-    Timestamps are epoch milliseconds, ready for Highcharts.
+    Timestamps are epoch milliseconds, ready for the charts.
     """
     payload = {}
     last = queryset.aggregate(last=Max('timestamp'))['last']
