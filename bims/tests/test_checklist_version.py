@@ -645,3 +645,105 @@ class TestChecklistVersionChangelogSummary(TestCase):
     def test_changelog_summary_zero_deletions_by_default(self):
         cv = _make_version(self.group)
         self.assertEqual(cv.changelog_summary['deletions'], 0)
+
+
+class TestWriteSnapshotCsvColumns(TestCase):
+    """The versioned CSV follows the same columns as the FADA taxa list CSV."""
+
+    def setUp(self):
+        self.group = TaxonGroupF.create(name='Oribatida')
+        self.version = _make_version(
+            self.group, version='2026.1', doi='https://doi.org/10.1234/fada')
+        ChecklistSnapshot.objects.create(
+            checklist_version=self.version,
+            checklist_id='1',
+            scientific_name='Genus species Author, 2000',
+            canonical_name='Genus species',
+            authorship='Author, 2000',
+            rank='SPECIES',
+            taxonomic_status='accepted',
+            family='Familyidae',
+            genus='Genus',
+            origin='Native',
+            endemism='Endemic',
+            tags={'AT': 'Y'},
+            additional_data={
+                'Taxonomic References': 'Doe 2001',
+                'Genus': 'duplicate of fixed column',
+                'Unrelated key': 'x',
+            },
+        )
+
+    def _read(self, is_fada, order_by=None):
+        import csv
+        from bims.tasks.download_taxa_list import write_snapshot_csv
+
+        snapshots = ChecklistSnapshot.objects.filter(
+            checklist_version=self.version)
+        with tempfile.NamedTemporaryFile(suffix='.csv') as tmp, \
+                patch('bims.tasks.download_taxa_list.is_fada_site',
+                      return_value=is_fada):
+            write_snapshot_csv(
+                snapshots, tmp.name, order_by, version=self.version)
+            with open(tmp.name, newline='', encoding='utf-8') as f:
+                return list(csv.reader(f))
+
+    def test_fada_csv_headers_match_taxa_list_export(self):
+        rows = self._read(is_fada=True)
+        headers = rows[0]
+        self.assertEqual(len(headers), len(set(headers)))
+        for excluded in ('Origin', 'Endemism', 'Variety', 'Invasion'):
+            self.assertNotIn(excluded, headers)
+        self.assertNotIn('Unrelated key', headers)
+        self.assertIn('Taxonomic References', headers)
+        self.assertLess(
+            headers.index('Taxonomic References'),
+            headers.index('AT') if 'AT' in headers else len(headers),
+        )
+        data = dict(zip(headers, rows[1]))
+        self.assertEqual(data['Taxonomic References'], 'Doe 2001')
+        self.assertEqual(data['AT'], 'Y')
+
+    def test_non_fada_csv_keeps_origin_columns(self):
+        headers = self._read(is_fada=False)[0]
+        self.assertIn('Origin', headers)
+        self.assertNotIn('Taxonomic References', headers)
+
+    def test_csv_footer_has_version_title_and_doi(self):
+        flat = [c for row in self._read(is_fada=True) for c in row]
+        self.assertIn('Oribatida Checklist v2026.1', flat)
+        self.assertIn('To be cited as:', flat)
+        self.assertIn('https://doi.org/10.1234/fada', flat)
+
+
+class TestWriteSnapshotPdfFamilyAuthor(TestCase):
+
+    def test_family_group_carries_author(self):
+        from bims.tasks.download_taxa_list import write_snapshot_pdf
+
+        group = TaxonGroupF.create(name='Oribatida')
+        version = _make_version(group, version='1.0')
+        TaxonomyF.create(
+            canonical_name='Familyidae', scientific_name='Familyidae',
+            rank='FAMILY', author='Grandjean, 1954')
+        ChecklistSnapshot.objects.create(
+            checklist_version=version, checklist_id='1',
+            scientific_name='Genus species', canonical_name='Genus species',
+            rank='SPECIES', taxonomic_status='accepted',
+            family='Familyidae', genus='Genus',
+        )
+        captured = {}
+
+        def fake_render(groups, styles):
+            captured.update(groups)
+            return []
+
+        mod = 'bims.tasks.download_taxa_list'
+        with patch(f'{mod}._render_checklist_groups', side_effect=fake_render), \
+                patch(f'{mod}._build_checklist_pdf_header', return_value=[]), \
+                patch(f'{mod}._get_checklist_pdf_styles'), \
+                patch(f'{mod}.SimpleDocTemplate'):
+            write_snapshot_pdf(
+                ChecklistSnapshot.objects.filter(checklist_version=version),
+                version, '/tmp/x.pdf', order_by='family')
+        self.assertEqual(captured['Familyidae']['author'], 'Grandjean, 1954')
