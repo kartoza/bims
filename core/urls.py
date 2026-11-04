@@ -40,6 +40,7 @@ urlpatterns = [
     path('redoc/', RedirectView.as_view(url='/api/schema/redoc/', permanent=False)),
     re_path(r'^', include('cloud_native_gis.urls')),
     re_path(r'^climate/', include('climate.urls')),
+    re_path(r'^groundwater/', include('groundwater.urls')),
     re_path(r'^sass/', include('sass.urls')),
     re_path(r'^bibliography/',
         include(('td_biblio.urls', 'bibliography'),
