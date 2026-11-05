@@ -371,20 +371,20 @@ class AbstractTaxonomy(AbstractValidation):
 
     @cached_property
     def cites_listing(self):
-        cites_listing_info = CITESListingInfo.objects.filter(
+        appendices = list(CITESListingInfo.objects.filter(
             taxonomy_id=self.id
-        )
-        if cites_listing_info.exists():
-            return ','.join(list(cites_listing_info.values_list(
-                'appendix', flat=True
-            )))
+        ).values_list('appendix', flat=True))
+        if appendices:
+            return ','.join(appendices)
+        return self.cites_listing_from_additional_data
+
+    @property
+    def cites_listing_from_additional_data(self):
+        """CITES listing recorded in additional_data, '' if there is none."""
         if self.additional_data:
-            if 'CITES Listing' in self.additional_data:
-                return self.additional_data['CITES Listing']
-            if 'Cites listing' in self.additional_data:
-                return self.additional_data['Cites listing']
-            if 'CITES listing' in self.additional_data:
-                return self.additional_data['CITES listing']
+            for key in ('CITES Listing', 'Cites listing', 'CITES listing'):
+                if key in self.additional_data:
+                    return self.additional_data[key]
         return ''
 
     @property
