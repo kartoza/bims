@@ -38,6 +38,7 @@ from bims.models.location_context_filter_group_order import (
 )
 from bims.models.taxonomy import Taxonomy
 from bims.models.taxon_group_taxonomy import TaxonGroupTaxonomy
+from bims.models.cites_listing_info import CITESListingInfo
 
 ORIGIN = {
     'alien': 'Non-Native',
@@ -343,6 +344,24 @@ def prefetch_batch(records, context):
         )
         for taxon_id in taxon_ids:
             divisions[taxon_id] = names.get((taxon_id,))
+
+    # Like divisions, CITES listings depend only on the taxon.
+    cites = context.setdefault('cites_listing', {})
+    taxa = {
+        r.taxonomy_id: r.taxonomy for r in records
+        if r.taxonomy_id and r.taxonomy_id not in cites
+    }
+    if taxa:
+        appendices = {}
+        for taxon_id, appendix in CITESListingInfo.objects.filter(
+            taxonomy_id__in=taxa
+        ).order_by('pk').values_list('taxonomy_id', 'appendix'):
+            appendices.setdefault(taxon_id, []).append(appendix)
+        for taxon_id, taxon in taxa.items():
+            cites[taxon_id] = (
+                ','.join(appendices[taxon_id]) if taxon_id in appendices
+                else taxon.cites_listing_from_additional_data
+            )
 
 
 class BioCollectionSerializer(serializers.ModelSerializer):

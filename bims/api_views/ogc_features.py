@@ -46,6 +46,7 @@ from bims.utils.ogc_protection import (
     statement_timeout,
     take_request_count,
 )
+from bims.serializers.bio_collection_serializer import EXPORT_SELECT_RELATED, EXPORT_PREFETCH_RELATED
 
 logger = logging.getLogger(__name__)
 
@@ -58,18 +59,6 @@ CONFORMANCE_CLASSES = [
     'http://www.opengis.net/spec/ogcapi-features-1/1.0/conf/oas30',
     'http://www.opengis.net/spec/ogcapi-features-1/1.0/conf/geojson',
 ]
-
-SELECT_RELATED = (
-    'site',
-    'site__location_type',
-    'taxonomy',
-    'taxonomy__origin',
-    'taxonomy__iucn_status',
-    'taxonomy__national_conservation_status',
-    'taxonomy__accepted_taxonomy__iucn_status',
-    'owner',
-    'collector_user',
-)
 
 class OgcApiException(Exception):
     """An error to be reported in the OGC API - Features exception format."""
@@ -506,6 +495,7 @@ class CollectionsView(OgcFeaturesView):
                     'href': abs_url(request, 'ogc-collections', token=token),
                     'rel': 'self',
                     'type': 'application/json',
+                    'type': 'application/json',
                 },
             ],
         })
@@ -556,7 +546,11 @@ class ItemsView(OgcFeaturesView):
                 BiologicalCollectionRecord.objects.filter(
                     pk__in=ids[offset:offset + limit]),
                 self.layer
-            ).select_related(*SELECT_RELATED).order_by('pk'))
+            ).select_related(
+                *EXPORT_SELECT_RELATED
+            ).prefetch_related(
+                *EXPORT_PREFETCH_RELATED
+            ).order_by('pk'))
         features, size = [], 0
         for feature in features_from_records(page):
             chunk = json.dumps(feature, cls=DjangoJSONEncoder)
@@ -627,7 +621,11 @@ class ItemView(OgcFeaturesView):
             record = visible_records(
                 BiologicalCollectionRecord.objects.filter(uuid=item_id),
                 self.layer
-            ).select_related(*SELECT_RELATED).first()
+            ).select_related(
+                *EXPORT_SELECT_RELATED
+            ).prefetch_related(
+                *EXPORT_PREFETCH_RELATED
+            ).first()
         ids = get_layer_ids(self.layer)
         if record is None or not is_in_sorted(ids, record.pk):
             raise OgcApiException(404, 'NotFound', 'Unknown feature.')
