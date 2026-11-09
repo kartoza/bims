@@ -7,7 +7,9 @@ from datetime import date
 import json
 
 from django.contrib.sites.models import Site
+from django.core.exceptions import PermissionDenied
 from django.http import HttpResponse, HttpResponseRedirect
+from django.template.response import TemplateResponse
 from django.conf import settings
 from django.utils.timezone import localtime
 from django.db import connection
@@ -994,28 +996,100 @@ class CustomUserAdmin(ProfileAdmin):
     )
 
     def merge_users(self, request, queryset):
-        active_user = queryset.filter(is_active=True)
-        if queryset.count() <= 1:
+        if queryset.count() < 2:
             self.message_user(
-                request, 'Need more than 1 user', messages.ERROR
+                request, 'Select at least 2 users to merge.', messages.ERROR
             )
             return
-        if not active_user.exists():
-            self.message_user(
-                request, 'Missing active user', messages.ERROR)
-            return
-        if active_user.count() > 1:
-            self.message_user(
-                request, 'There are more than 1 active user',
-                messages.ERROR)
-            return
-        merge_users(
-            primary_user=active_user[0],
-            user_list=queryset.values_list('id', flat=True)
-        )
-        self.message_user(request, 'Users has been merged')
+        selected = ','.join(
+            str(pk) for pk in queryset.values_list('pk', flat=True))
+        return HttpResponseRedirect(
+            reverse('admin:merge_users') + f'?ids={selected}')
 
     merge_users.short_description = 'Merge users'
+
+    def get_urls(self):
+        urls = super().get_urls()
+        custom_urls = [
+            path(
+                'merge/',
+                self.admin_site.admin_view(self.merge_users_view),
+                name='merge_users',
+            ),
+        ]
+        return custom_urls + urls
+
+    def merge_users_view(self, request):
+        """Show the selected users, choose the one to keep, then merge."""
+        changelist_url = reverse('admin:people_profile_changelist')
+        if not self.has_delete_permission(request):
+            raise PermissionDenied
+
+        ids_param = request.GET.get('ids', '') or request.POST.get('ids', '')
+        id_list = [
+            int(i) for i in ids_param.split(',') if i.strip().isdigit()
+        ]
+        users = Profile.objects.filter(pk__in=id_list)
+        if users.count() < 2:
+            self.message_user(
+                request, 'Select at least 2 users to merge.', messages.ERROR
+            )
+            return HttpResponseRedirect(changelist_url)
+
+        primary_id = request.POST.get('primary_user')
+        if request.method == 'POST':
+            primary = users.filter(pk=primary_id).first() if (
+                primary_id and primary_id.isdigit()) else None
+            if not primary:
+                self.message_user(
+                    request, 'Please select the user to keep.',
+                    messages.ERROR)
+            else:
+                result = merge_users(
+                    primary_user=primary,
+                    user_list=list(
+                        users.exclude(pk=primary.pk).values_list(
+                            'pk', flat=True))
+                )
+                if result['merged']:
+                    self.message_user(
+                        request,
+                        f'{result["merged"]} user(s) merged into '
+                        f'{primary}.')
+                if result['failed']:
+                    self.message_user(
+                        request,
+                        'These users could not be merged and were kept: '
+                        + ', '.join(result['failed']),
+                        messages.ERROR)
+                return HttpResponseRedirect(changelist_url)
+
+        from bims.models.biological_collection_record import (
+            BiologicalCollectionRecord
+        )
+        rows = list(users.order_by('-is_active', '-last_login', 'username'))
+        record_counts = dict(
+            BiologicalCollectionRecord.objects.filter(
+                owner_id__in=[u.pk for u in rows]
+            ).order_by().values_list('owner_id').annotate(
+                total=Count('id')
+            )
+        )
+        for user in rows:
+            user.record_total = record_counts.get(user.pk, 0)
+
+        context = dict(
+            self.admin_site.each_context(request),
+            title='Merge users',
+            opts=self.model._meta,
+            users=rows,
+            ids=','.join(str(u.pk) for u in rows),
+            default_primary=int(primary_id) if (
+                primary_id and primary_id.isdigit()) else rows[0].pk,
+            changelist_url=changelist_url,
+        )
+        return TemplateResponse(
+            request, 'admin/merge_users.html', context)
 
     def sass_accredited_status(self, obj):
         false_response = mark_safe(
