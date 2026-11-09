@@ -253,9 +253,9 @@ class TestItems(OgcFeaturesApiTestCase):
         self.assertEqual(body['numberReturned'], 1)
         feature = body['features'][0]
         self.assertEqual(feature['id'], str(record.uuid))
-        self.assertEqual(feature['properties']['record_id'], record.id)
+        self.assertEqual(feature['properties']['UUID'], str(record.uuid))
         self.assertEqual(
-            feature['properties']['species_name'],
+            feature['properties']['Taxon'],
             self.taxon.canonical_name)
 
     def test_cors_header_present(self):
@@ -274,7 +274,7 @@ class TestItems(OgcFeaturesApiTestCase):
             self.assertEqual(response.status_code, status.HTTP_200_OK)
             body = response.json()
             seen_ids.extend(
-                feature['properties']['record_id']
+                feature['properties']['UUID']
                 for feature in body['features'])
             next_links = [
                 link['href'] for link in body['links']
@@ -285,7 +285,7 @@ class TestItems(OgcFeaturesApiTestCase):
                 url = '%s?%s' % (split.path, split.query)
             else:
                 url = None
-        self.assertEqual(sorted(seen_ids), sorted(r.id for r in records))
+        self.assertEqual(sorted(seen_ids), sorted(str(r.uuid) for r in records))
         self.assertEqual(len(seen_ids), len(set(seen_ids)))
 
     def test_bad_limit_is_400(self):
@@ -314,11 +314,13 @@ class TestItems(OgcFeaturesApiTestCase):
             self.items_url(layer.raw_token),
             {'bbox': '0,0,20,20'})
         body = response.json()
-        ids = [f['properties']['record_id'] for f in body['features']]
-        self.assertEqual(ids, [inside.id])
+        ids = [f['properties']['UUID'] for f in body['features']]
+        self.assertEqual(ids, [str(inside.uuid)])
 
     def test_paging_returns_every_record_once(self):
-        created = [self.create_record().id for _ in range(5)]
+        created_records = [self.create_record() for _ in range(5)]
+        created_id = [(created.id, created.uuid) for created in created_records]
+
         layer = self.create_layer()
         seen = []
         for offset in (0, 2, 4):
@@ -327,8 +329,8 @@ class TestItems(OgcFeaturesApiTestCase):
                 {'limit': 2, 'offset': offset})
             body = response.json()
             self.assertEqual(body['numberMatched'], 5)
-            seen += [f['properties']['record_id'] for f in body['features']]
-        self.assertEqual(seen, sorted(created))
+            seen += [f['properties']['UUID'] for f in body['features']]
+        self.assertEqual(seen, [str(tup[1]) for tup in sorted(created_id, key=lambda x: x[0])])
 
     def test_cached_ids_do_not_serve_a_record_embargoed_since(self):
         from datetime import timedelta
@@ -356,8 +358,8 @@ class TestItems(OgcFeaturesApiTestCase):
         layer = self.create_layer()
         response = self.client.get(self.items_url(layer.raw_token))
         body = response.json()
-        ids = [f['properties']['record_id'] for f in body['features']]
-        self.assertEqual(ids, [visible.id])
+        ids = [f['properties']['UUID'] for f in body['features']]
+        self.assertEqual(ids, [str(visible.uuid)])
 
 
 class TestSingleItem(OgcFeaturesApiTestCase):
@@ -371,7 +373,7 @@ class TestSingleItem(OgcFeaturesApiTestCase):
         self.assertEqual(response['Content-Type'], 'application/geo+json')
         body = response.json()
         self.assertEqual(body['id'], str(record.uuid))
-        self.assertEqual(body['properties']['record_id'], record.id)
+        self.assertEqual(body['properties']['UUID'], str(record.uuid))
 
     def test_unknown_item_is_404(self):
         import uuid as uuid_module

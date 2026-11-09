@@ -10,9 +10,9 @@ from urllib.parse import parse_qsl
 
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.urls import reverse
+from preferences import preferences
 from rest_framework import serializers
 
-from bims.enums.taxonomic_rank import TaxonomicRank
 from bims.exceptions import OgcLayerBackOff
 from bims.models.ogc_layer import OgcLayer
 from bims.utils.ogc_layer import (
@@ -21,94 +21,10 @@ from bims.utils.ogc_layer import (
     validate_layer,
 )
 from bims.utils.ogc_protection import OgcLayerProtectionError
-
-
-class OgcFeaturePropertiesSerializer(serializers.Serializer):
-    """Flat property list for a BiologicalCollectionRecord OGC feature."""
-
-    record_id = serializers.IntegerField(source='pk')
-    uuid = serializers.SerializerMethodField()
-    species_name = serializers.SerializerMethodField()
-    taxon_rank = serializers.SerializerMethodField()
-    site_code = serializers.SerializerMethodField()
-    date = serializers.SerializerMethodField()
-    collector = serializers.SerializerMethodField()
-    owner = serializers.SerializerMethodField()
-    institution = serializers.SerializerMethodField()
-    validation_status = serializers.SerializerMethodField()
-    origin = serializers.SerializerMethodField()
-    conservation_status = serializers.SerializerMethodField()
-
-    @staticmethod
-    def _person_name(user):
-        if not user:
-            return None
-        full_name = ('%s %s' % (user.first_name, user.last_name)).strip()
-        return full_name or user.username
-
-    def get_uuid(self, obj):
-        return str(obj.uuid) if obj.uuid else None
-
-    def get_species_name(self, obj):
-        taxonomy = obj.taxonomy
-        if taxonomy and taxonomy.canonical_name:
-            return taxonomy.canonical_name
-        return obj.original_species_name
-
-    def get_taxon_rank(self, obj):
-        taxonomy = obj.taxonomy
-        if not taxonomy or not taxonomy.rank:
-            return None
-        try:
-            return TaxonomicRank[taxonomy.rank].value
-        except KeyError:
-            return taxonomy.rank
-
-    def get_site_code(self, obj):
-        site = obj.site
-        if not site:
-            return None
-        return site.site_code or site.legacy_site_code
-
-    def get_date(self, obj):
-        if not obj.collection_date:
-            return None
-        return obj.collection_date.isoformat()
-
-    def get_collector(self, obj):
-        return obj.collector or self._person_name(obj.collector_user)
-
-    def get_owner(self, obj):
-        return self._person_name(obj.owner)
-
-    def get_institution(self, obj):
-        return obj.institution_id or None
-
-    def get_validation_status(self, obj):
-        if obj.ready_for_validation:
-            return 'in_review'
-        if obj.is_validated:
-            return 'validated'
-        if obj.is_rejected:
-            return 'rejected'
-        return 'unvalidated'
-
-    def get_origin(self, obj):
-        taxonomy = obj.taxonomy
-        if taxonomy and taxonomy.origin:
-            return taxonomy.origin.category
-        return None
-
-    def get_conservation_status(self, obj):
-        taxonomy = obj.taxonomy
-        if not taxonomy:
-            return None
-        status = taxonomy.iucn_status or taxonomy.national_conservation_status
-        if not status and taxonomy.accepted_taxonomy:
-            status = taxonomy.accepted_taxonomy.iucn_status
-        if not status:
-            return None
-        return status.get_status()
+from bims.serializers.bio_collection_serializer import (
+    BioCollectionOneRowSerializer,
+    prefetch_batch,
+)
 
 
 def feature_geometry(record):
@@ -121,21 +37,78 @@ def feature_geometry(record):
     return json.loads(geometry.geojson)
 
 
-def feature_from_record(record, properties=None):
+def _serializer_context(project_name=None) -> dict:
+    """
+    Get serializer context for biological collection record based on the project.
+    :param project_name: the project name, if already known
+    :return: dict of serializer context
+    """
+    if project_name is None:
+        project_name = preferences.SiteSetting.project_name
+    if project_name.lower() == 'sanparks':
+        exclude_fields = [
+            'user_river_name',
+            'river_name',
+            'user_wetland_name',
+            'wetland_name',
+            'user_geomorphological_zone',
+            'hydroperiod',
+            'wetland_indicator_status',
+            'broad_biotope',
+            'specific_biotope',
+            'substratum',
+            'analyst',
+            'analyst_institute',
+            'sampling_effort_measure',
+            'sampling_effort_value',
+            'abundance_value',
+            'abundance_measure'
+        ]
+    else:
+        exclude_fields = [
+            'gbif_coordinate_uncertainty_m',
+            'gbif_coordinate_precision',
+        ]
+
+    return {
+        'header': [],
+        'exclude_fields': exclude_fields,
+        'added_headers': set(),
+    }
+
+
+def format_properties_key(properties, project_name=None):
+    from bims.download.collection_record import format_header, PARK_OR_MPA_NAME
+    if project_name is None:
+        project_name = preferences.SiteSetting.project_name
+    updated_properties = {}
+    for prop_key, prop_val in properties.items():
+        if project_name.lower() == 'sanparks' and prop_key == 'site_description':
+            updated_prop_key = PARK_OR_MPA_NAME
+        else:
+            updated_prop_key = format_header(prop_key)
+        updated_properties[updated_prop_key] = prop_val
+    return updated_properties
+
+
+def feature_from_record(record, properties=None, project_name=None):
     """Return a GeoJSON Feature dict for a BiologicalCollectionRecord.
 
     The feature id is the record uuid.
 
     :param properties: the serialized properties, if already known. See
         features_from_records().
+    :param project_name: the project name, if already known.
     """
     if properties is None:
-        properties = OgcFeaturePropertiesSerializer(record).data
+        properties = BioCollectionOneRowSerializer(
+            record,
+            context=_serializer_context(project_name)).data
     return {
         'type': 'Feature',
         'id': str(record.uuid) if record.uuid else record.pk,
         'geometry': feature_geometry(record),
-        'properties': properties,
+        'properties': format_properties_key(properties, project_name),
     }
 
 
@@ -143,13 +116,18 @@ def features_from_records(records):
     """Return a GeoJSON Feature dict for each record, lazily.
 
     Serializing the properties of all records together builds the
-    serializer fields once instead of once per record, which is much
-    faster for a page of features.
+    serializer fields once instead of once per record, and the lookups
+    are bulk-loaded for the page (prefetch_batch), so the number of
+    queries does not grow with the number of records.
     """
     records = list(records)
-    properties = OgcFeaturePropertiesSerializer(records, many=True).data
+    project_name = preferences.SiteSetting.project_name
+    context = _serializer_context(project_name)
+    prefetch_batch(records, context)
+    properties = BioCollectionOneRowSerializer(
+        records, context=context, many=True).data
     for record, props in zip(records, properties):
-        yield feature_from_record(record, props)
+        yield feature_from_record(record, props, project_name)
 
 
 def layer_url(request, token):
