@@ -428,18 +428,19 @@ class EditSourceReferenceView(UserPassesTestMixin, UpdateView):
                 pass
         for key in post_dict:
             author_user = None
+            post_data = post_dict[key].strip()
             # From user id
-            if 'author_id' in key:
-                author_id = post_dict[key].strip()
+            if 'author_id' in key and post_data:
+                author_id = post_data
                 try:
                     author_user = get_user_model().objects.get(
                         id=author_id
                     )
-                except get_user_model().DoesNotExist:
+                except (get_user_model().DoesNotExist, ValueError):
                     continue
             # From user name
             elif 'author' in key:
-                user_string = post_dict[key].strip()
+                user_string = post_data
                 author_user = self.get_user_from_string(user_string)
             if author_user:
                 bims_doc_author, _ = (
