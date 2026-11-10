@@ -1,4 +1,6 @@
-from django.db import IntegrityError
+import logging
+
+from django.db import IntegrityError, connection, transaction
 from django.db.models.fields.reverse_related import ForeignObjectRel, ManyToManyRel, OneToOneRel
 from django.contrib.auth import get_user_model
 from django.utils.text import slugify
@@ -6,6 +8,8 @@ from django.db.models import Q
 
 from geonode.people.models import Profile
 from bims.models.profile import Profile as BimsProfile
+
+logger = logging.getLogger(__name__)
 
 
 def get_user_from_name(first_name, last_name):
@@ -119,21 +123,78 @@ def create_users_from_string(user_string):
     return list_user
 
 
+def _database_references(model):
+    """
+    Foreign keys that point to the user table, read from the database.
+
+    Django only knows the relations of the apps that are installed. A
+    table such as oauth2_provider_accesstoken can reference the user table
+    without its app being installed, and then neither the ORM update nor
+    the ORM delete cascade can see it, so deleting the user fails with an
+    IntegrityError. Yields (table, column) with both already quoted.
+    """
+    if connection.vendor != 'postgresql':
+        return []
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT c.conrelid::regclass::text, quote_ident(a.attname)
+            FROM pg_constraint c
+            JOIN pg_attribute a
+              ON a.attrelid = c.conrelid AND a.attnum = c.conkey[1]
+            WHERE c.contype = 'f'
+              AND array_length(c.conkey, 1) = 1
+              AND c.confrelid = %s::regclass
+            """,
+            [connection.ops.quote_name(model._meta.db_table)]
+        )
+        return cursor.fetchall()
+
+
+def _move_database_references(model, user_id, primary_id):
+    """
+    Point the rows of other tables that still reference user_id to
+    primary_id. Rows that conflict with an existing row of the primary
+    user (a unique constraint) are deleted instead.
+    """
+    for table, column in _database_references(model):
+        try:
+            with transaction.atomic():
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        'UPDATE {t} SET {c} = %s WHERE {c} = %s'.format(
+                            t=table, c=column),
+                        [primary_id, user_id]
+                    )
+        except IntegrityError:
+            with transaction.atomic():
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        'DELETE FROM {t} WHERE {c} = %s'.format(
+                            t=table, c=column),
+                        [user_id]
+                    )
+
+
 def merge_users(primary_user, user_list):
     """
     Merge multiple users into one primary_user.
-    Handles both FK and M2M reverse relations.
-    Users that fail to merge are skipped from deletion.
+    Handles both FK and M2M reverse relations, and the foreign keys of
+    tables that Django does not know about (see _database_references).
+    Each user is merged in its own savepoint, so a user that fails to merge
+    is rolled back and kept.
+
+    :return: dict with the number of users merged and the usernames of
+        the users that could not be merged
     """
+    result = {'merged': 0, 'failed': []}
     if not primary_user or not user_list:
-        return
+        return result
 
     User = get_user_model()
     users = User.objects.filter(
         id__in=user_list
     ).exclude(id=primary_user.id)
-
-    print('Merging %s users into %s' % (users.count(), str(primary_user)))
 
     relations = [
         rel for rel in primary_user._meta.get_fields()
@@ -141,54 +202,50 @@ def merge_users(primary_user, user_list):
         and not isinstance(rel, OneToOneRel)
     ]
 
-    failed_user_ids = set()
-
     for user in users:
-        header = '----- {} -----'.format(str(user))
-        print(header)
-        for rel in relations:
-            link = rel.get_accessor_name()
-            try:
-                if isinstance(rel, ManyToManyRel):
-                    if not rel.through._meta.auto_created:
-                        continue
-                    related_objects = getattr(user, link).all()
-                    if related_objects.exists():
-                        print('Merging M2M {obj} from: {user}'.format(
-                            obj=str(related_objects.model._meta.label),
-                            user=str(user)
-                        ))
-                        getattr(primary_user, link).add(*related_objects)
-                else:
-                    manager = getattr(user, link)
-                    objects = manager.all()
-                    if not objects.exists():
-                        continue
-                    print('Updating {obj} for: {user}'.format(
-                        obj=str(objects.model._meta.label),
-                        user=str(user)
-                    ))
-                    field_name = manager.field.name
-                    try:
-                        objects.update(**{field_name: primary_user})
-                    except IntegrityError:
-                        # Bulk update failed due to a unique constraint;
-                        # re-assign row-by-row and delete any that conflict.
-                        for obj in list(objects):
-                            try:
-                                type(obj).objects.filter(pk=obj.pk).update(
-                                    **{field_name: primary_user}
-                                )
-                            except IntegrityError:
-                                obj.delete()
-            except Exception as e:  # noqa
-                print('Failed to merge {link}: {e}'.format(link=link, e=e))
-                failed_user_ids.add(user.id)
-                continue
-        print('-' * len(header))
+        username = str(user)
+        try:
+            with transaction.atomic():
+                _merge_user(User, primary_user, user, relations)
+        except Exception as e:  # noqa
+            logger.error('Failed to merge user %s: %s', username, e)
+            result['failed'].append(username)
+            continue
+        result['merged'] += 1
+    return result
 
-    if failed_user_ids:
-        print('Skipping deletion of %s user(s) due to errors: %s' % (
-            len(failed_user_ids), failed_user_ids
-        ))
-    users.exclude(id__in=failed_user_ids).delete()
+
+def _merge_user(User, primary_user, user, relations):
+    """Move everything of user to primary_user, then delete user."""
+    for rel in relations:
+        link = rel.get_accessor_name()
+        if isinstance(rel, ManyToManyRel):
+            if not rel.through._meta.auto_created:
+                continue
+            related_objects = getattr(user, link).all()
+            if related_objects.exists():
+                getattr(primary_user, link).add(*related_objects)
+            continue
+
+        manager = getattr(user, link)
+        objects = manager.all()
+        if not objects.exists():
+            continue
+        field_name = manager.field.name
+        try:
+            with transaction.atomic():
+                objects.update(**{field_name: primary_user})
+        except IntegrityError:
+            # Bulk update failed due to a unique constraint;
+            # re-assign row-by-row and delete any that conflict.
+            for obj in list(objects):
+                try:
+                    with transaction.atomic():
+                        type(obj).objects.filter(pk=obj.pk).update(
+                            **{field_name: primary_user}
+                        )
+                except IntegrityError:
+                    obj.delete()
+
+    _move_database_references(User, user.pk, primary_user.pk)
+    user.delete()

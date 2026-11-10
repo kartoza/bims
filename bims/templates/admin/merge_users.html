@@ -1,0 +1,72 @@
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+
+{% block title %}Merge users{% endblock %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+  <a href="{% url 'admin:index' %}">Home</a>
+  &rsaquo; <a href="{% url 'admin:app_list' app_label=opts.app_label %}">{{ opts.app_config.verbose_name }}</a>
+  &rsaquo; <a href="{{ changelist_url }}">{{ opts.verbose_name_plural|capfirst }}</a>
+  &rsaquo; Merge
+</div>
+{% endblock %}
+
+{% block content %}
+<h1>Merge users</h1>
+
+<p>
+  Choose the <strong>user to keep</strong>. Everything linked to the other
+  users (records, site visits, source references, tokens and so on) is moved
+  to the user you keep, and the other users are then deleted. The user to keep
+  does not need to be active, and no user is deactivated.
+</p>
+
+<form method="post">
+  {% csrf_token %}
+  <input type="hidden" name="ids" value="{{ ids }}">
+
+  <fieldset class="module aligned">
+    <h2>Users to merge</h2>
+    <table style="width:100%; border-collapse:collapse;">
+      <thead>
+        <tr>
+          <th style="text-align:left; padding:8px; border-bottom:1px solid #ddd;">Keep</th>
+          <th style="text-align:left; padding:8px; border-bottom:1px solid #ddd;">Username</th>
+          <th style="text-align:left; padding:8px; border-bottom:1px solid #ddd;">Name</th>
+          <th style="text-align:left; padding:8px; border-bottom:1px solid #ddd;">Email</th>
+          <th style="text-align:left; padding:8px; border-bottom:1px solid #ddd;">Organization</th>
+          <th style="text-align:left; padding:8px; border-bottom:1px solid #ddd;">Active</th>
+          <th style="text-align:left; padding:8px; border-bottom:1px solid #ddd;">Last login</th>
+          <th style="text-align:left; padding:8px; border-bottom:1px solid #ddd;">Records</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for user in users %}
+        <tr>
+          <td style="padding:8px; border-bottom:1px solid #eee; text-align:center;">
+            <input type="radio" name="primary_user" value="{{ user.pk }}"
+                   {% if user.pk == default_primary %}checked{% endif %} required>
+          </td>
+          <td style="padding:8px; border-bottom:1px solid #eee;">
+            <a href="{% url 'admin:people_profile_change' user.pk %}" target="_blank">{{ user.username }}</a>
+          </td>
+          <td style="padding:8px; border-bottom:1px solid #eee;">{{ user.first_name }} {{ user.last_name }}</td>
+          <td style="padding:8px; border-bottom:1px solid #eee;">{{ user.email }}</td>
+          <td style="padding:8px; border-bottom:1px solid #eee;">{{ user.organization|default:"" }}</td>
+          <td style="padding:8px; border-bottom:1px solid #eee;">{{ user.is_active|yesno:"Yes,No" }}</td>
+          <td style="padding:8px; border-bottom:1px solid #eee;">{{ user.last_login|default:"-" }}</td>
+          <td style="padding:8px; border-bottom:1px solid #eee;">{{ user.record_total }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </fieldset>
+
+  <div style="margin-top:16px;">
+    <input type="submit" value="Confirm Merge" class="button default"
+           onclick="return confirm('This will permanently delete the other users. Continue?');">
+    <a href="{{ changelist_url }}" class="button cancel-link" style="margin-left:8px;">Cancel</a>
+  </div>
+</form>
+{% endblock %}
