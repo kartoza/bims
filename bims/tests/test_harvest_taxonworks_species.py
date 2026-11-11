@@ -138,9 +138,10 @@ class TestHarvestTaxonWorksSpeciesTask(FastTenantTestCase):
         return session
 
     class _MockResponse:
-        def __init__(self, payload, status_code=200):
+        def __init__(self, payload, status_code=200, headers=None):
             self._payload = payload
             self.status_code = status_code
+            self.headers = headers or {}
 
         def json(self):
             return self._payload
@@ -480,6 +481,180 @@ class TestHarvestTaxonWorksSpeciesTask(FastTenantTestCase):
         session.refresh_from_db()
         self.assertIn('Canceled', session.status)
         self.assertFalse(Taxonomy.objects.filter(canonical_name='ShouldNotExist').exists())
+
+    # ------------------------------------------------------------------
+    # A failed page fetch must not be treated as end-of-data
+    # ------------------------------------------------------------------
+
+    @mock.patch(_PATCH_PREFS)
+    @mock.patch(_PATCH_SLEEP, return_value=None)
+    @mock.patch(_PATCH_HTTP_GET)
+    @mock.patch(_PATCH_CONNECT)
+    @mock.patch(_PATCH_DISCONNECT)
+    def test_failed_page_marks_session_failed_and_resumable(
+        self, mock_dis, mock_con, mock_http_get, mock_sleep, mock_prefs
+    ):
+        from bims.tasks.harvest_taxonworks_species import (
+            PER_PAGE, PAGE_FETCH_ATTEMPTS,
+        )
+        mock_prefs.SiteSetting.auto_validate_taxa_on_upload = True
+
+        page_1 = [
+            _record(5000 + i, f'Fam{i}', 'family') for i in range(PER_PAGE)
+        ]
+        page_2 = [_record(6001, 'NeverReached', 'family')]
+        base_side_effect = self._mock_http_get([page_1, page_2])
+        page_2_calls = {'n': 0}
+
+        def _side_effect(url, params=None, timeout=None):
+            if url.endswith('/taxon_names') and ('page', 2) in (params or []):
+                page_2_calls['n'] += 1
+                return self._MockResponse({}, status_code=503)
+            return base_side_effect(url, params=params, timeout=timeout)
+
+        mock_http_get.side_effect = _side_effect
+
+        session = self._make_session()
+        harvest_taxonworks_species(session.id, schema_name=self.schema_name)
+
+        session.refresh_from_db()
+        self.assertEqual(page_2_calls['n'], PAGE_FETCH_ATTEMPTS)
+        self.assertTrue(session.status.startswith('Failed at page 2'))
+        self.assertNotIn('Finished', session.status)
+        self.assertEqual(session.additional_data['current_page'], 2)
+        self.assertIn('last_error', session.additional_data)
+        self.assertEqual(
+            len(session.additional_data['processed_taxonworks_ids']), PER_PAGE
+        )
+        self.assertFalse(
+            Taxonomy.objects.filter(canonical_name='NeverReached').exists()
+        )
+
+        # Re-running the task for the same session resumes from page 2.
+        mock_http_get.side_effect = base_side_effect
+        harvest_taxonworks_species(session.id, schema_name=self.schema_name)
+        session.refresh_from_db()
+        self.assertIn('Finished', session.status)
+        self.assertTrue(
+            Taxonomy.objects.filter(canonical_name='NeverReached').exists()
+        )
+
+    @mock.patch(_PATCH_PREFS)
+    @mock.patch(_PATCH_SLEEP, return_value=None)
+    @mock.patch(_PATCH_HTTP_GET)
+    @mock.patch(_PATCH_CONNECT)
+    @mock.patch(_PATCH_DISCONNECT)
+    def test_transient_page_failure_is_retried(
+        self, mock_dis, mock_con, mock_http_get, mock_sleep, mock_prefs
+    ):
+        mock_prefs.SiteSetting.auto_validate_taxa_on_upload = True
+        base_side_effect = self._mock_http_get([self.SAMPLE_PAGE_1])
+        failures = {'left': 2}
+
+        def _side_effect(url, params=None, timeout=None):
+            if url.endswith('/taxon_names') and failures['left'] > 0:
+                failures['left'] -= 1
+                raise ConnectionError('read timed out')
+            return base_side_effect(url, params=params, timeout=timeout)
+
+        mock_http_get.side_effect = _side_effect
+
+        session = self._make_session()
+        harvest_taxonworks_species(session.id, schema_name=self.schema_name)
+
+        session.refresh_from_db()
+        self.assertIn('Finished', session.status)
+        self.assertTrue(
+            Taxonomy.objects.filter(canonical_name='Osmylites', rank='GENUS').exists()
+        )
+
+    # ------------------------------------------------------------------
+    # pagination-total-pages header drives the loop
+    # ------------------------------------------------------------------
+
+    @mock.patch(_PATCH_PREFS)
+    @mock.patch(_PATCH_SLEEP, return_value=None)
+    @mock.patch(_PATCH_HTTP_GET)
+    @mock.patch(_PATCH_CONNECT)
+    @mock.patch(_PATCH_DISCONNECT)
+    def test_continues_until_total_pages(
+        self, mock_dis, mock_con, mock_http_get, mock_sleep, mock_prefs
+    ):
+        """A short or empty page before the last page doesn't stop the harvest."""
+        mock_prefs.SiteSetting.auto_validate_taxa_on_upload = True
+        pages = [
+            [_record(7001, 'FamA', 'family')],
+            [],
+            [_record(7003, 'FamC', 'family')],
+        ]
+        base_side_effect = self._mock_http_get(pages)
+
+        def _side_effect(url, params=None, timeout=None):
+            resp = base_side_effect(url, params=params, timeout=timeout)
+            if url.endswith('/taxon_names'):
+                resp.headers = {'pagination-total-pages': str(len(pages))}
+            return resp
+
+        mock_http_get.side_effect = _side_effect
+
+        session = self._make_session()
+        harvest_taxonworks_species(session.id, schema_name=self.schema_name)
+
+        session.refresh_from_db()
+        self.assertIn('Finished', session.status)
+        self.assertEqual(session.additional_data['total_pages'], 3)
+        self.assertTrue(Taxonomy.objects.filter(canonical_name='FamA').exists())
+        self.assertTrue(Taxonomy.objects.filter(canonical_name='FamC').exists())
+
+    # ------------------------------------------------------------------
+    # taxon_name_id limits the harvest to that branch
+    # ------------------------------------------------------------------
+
+    @mock.patch(_PATCH_PREFS)
+    @mock.patch(_PATCH_SLEEP, return_value=None)
+    @mock.patch(_PATCH_HTTP_GET)
+    @mock.patch(_PATCH_CONNECT)
+    @mock.patch(_PATCH_DISCONNECT)
+    def test_taxon_name_id_harvests_root_and_descendants(
+        self, mock_dis, mock_con, mock_http_get, mock_sleep, mock_prefs
+    ):
+        mock_prefs.SiteSetting.auto_validate_taxa_on_upload = True
+        root = _record(8000, 'Plecoptera', 'order')
+        descendants = [
+            _record(8001, 'Perlidae', 'family', parent_id=8000),
+            _record(8002, 'Acroneuria', 'genus', parent_id=8001),
+        ]
+        mock_http_get.side_effect = self._mock_http_get(
+            [descendants], extra_records={8000: root}
+        )
+
+        session = self._make_session({
+            'base_url': 'https://test.taxonworks.org',
+            'project_token': 'token',
+            'exclude_extinct': True,
+            'taxon_name_id': 8000,
+        })
+        harvest_taxonworks_species(session.id, schema_name=self.schema_name)
+
+        listing_params = [
+            call.kwargs.get('params')
+            for call in mock_http_get.call_args_list
+            if call.args[0].endswith('/taxon_names')
+        ]
+        self.assertTrue(listing_params)
+        for params in listing_params:
+            self.assertIn(('taxon_name_id[]', 8000), params)
+            self.assertIn(('descendants', 'true'), params)
+
+        session.refresh_from_db()
+        self.assertIn('Finished', session.status)
+        self.assertIn(8000, session.additional_data['processed_taxonworks_ids'])
+        for name, rank in (('Plecoptera', 'ORDER'), ('Perlidae', 'FAMILY'),
+                           ('Acroneuria', 'GENUS')):
+            self.assertTrue(
+                Taxonomy.objects.filter(canonical_name=name, rank=rank).exists(),
+                name,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -892,3 +1067,108 @@ class TestSpeciesHierarchyValidation(FastTenantTestCase):
         self.assertEqual(subsp.parent.canonical_name, 'Homo sapiens')
         self.assertEqual(subsp.parent.parent.rank, 'GENUS')
         self.assertEqual(subsp.parent.parent.canonical_name, 'Homo')
+
+
+# ---------------------------------------------------------------------------
+# Auto-resume of stalled TaxonWorks sessions
+# ---------------------------------------------------------------------------
+
+_PATCH_DELAY = 'bims.tasks.harvest_taxonworks_species.harvest_taxonworks_species.delay'
+
+
+class TestAutoResumeTaxonWorksHarvest(FastTenantTestCase):
+
+    def setUp(self):
+        self.taxon_group = TaxonGroupF.create()
+        self.user = UserF.create()
+        self.schema_name = connection.schema_name
+
+    def _make_session(self, idle_seconds, **kwargs):
+        import os
+        import time
+        session = HarvestSession.objects.create(
+            harvester=self.user,
+            module_group=self.taxon_group,
+            category=kwargs.pop('category', 'taxonworks'),
+            additional_data=kwargs.pop('additional_data', {'current_page': 88}),
+            **kwargs,
+        )
+        session.log_file.save(
+            f'taxonworks-autoresume-{session.id}.log', ContentFile(b'x\n'),
+        )
+        mtime = time.time() - idle_seconds
+        os.utime(session.log_file.path, (mtime, mtime))
+        return session
+
+    @mock.patch(_PATCH_DELAY)
+    def test_stalled_session_is_resumed(self, mock_delay):
+        from bims.tasks.harvest_taxonworks_species import (
+            STALL_SECONDS, auto_resume_taxonworks_harvest,
+            taxonworks_session_is_stalled,
+        )
+        session = self._make_session(STALL_SECONDS + 60)
+        auto_resume_taxonworks_harvest(self.schema_name)
+
+        mock_delay.assert_called_once_with(session.id, schema_name=self.schema_name)
+        session.refresh_from_db()
+        self.assertEqual(session.additional_data['auto_resume_count'], 1)
+        self.assertEqual(session.additional_data['auto_resume_page'], 88)
+        # The log line written on resume refreshes the heartbeat, so the
+        # next check doesn't dispatch it again.
+        self.assertFalse(taxonworks_session_is_stalled(session))
+        auto_resume_taxonworks_harvest(self.schema_name)
+        mock_delay.assert_called_once()
+
+    @mock.patch(_PATCH_DELAY)
+    def test_active_finished_and_other_sessions_ignored(self, mock_delay):
+        from bims.tasks.harvest_taxonworks_species import (
+            STALL_SECONDS, auto_resume_taxonworks_harvest,
+        )
+        self._make_session(60)  # still running
+        self._make_session(STALL_SECONDS + 60, finished=True)
+        self._make_session(STALL_SECONDS + 60, canceled=True)
+        self._make_session(STALL_SECONDS + 60, category='gbif')
+        auto_resume_taxonworks_harvest(self.schema_name)
+        mock_delay.assert_not_called()
+
+    @mock.patch(_PATCH_DELAY)
+    def test_gives_up_after_repeated_stalls_on_same_page(self, mock_delay):
+        from bims.tasks.harvest_taxonworks_species import (
+            MAX_AUTO_RESUMES_PER_PAGE, STALL_SECONDS,
+            auto_resume_taxonworks_harvest,
+        )
+        session = self._make_session(
+            STALL_SECONDS + 60,
+            additional_data={
+                'current_page': 88,
+                'auto_resume_page': 88,
+                'auto_resume_count': MAX_AUTO_RESUMES_PER_PAGE,
+            },
+        )
+        auto_resume_taxonworks_harvest(self.schema_name)
+
+        mock_delay.assert_not_called()
+        session.refresh_from_db()
+        self.assertTrue(session.finished)
+        self.assertTrue(session.status.startswith('Failed at page 88'))
+
+    @mock.patch(_PATCH_DELAY)
+    def test_counter_resets_when_page_advanced(self, mock_delay):
+        from bims.tasks.harvest_taxonworks_species import (
+            MAX_AUTO_RESUMES_PER_PAGE, STALL_SECONDS,
+            auto_resume_taxonworks_harvest,
+        )
+        session = self._make_session(
+            STALL_SECONDS + 60,
+            additional_data={
+                'current_page': 120,
+                'auto_resume_page': 88,
+                'auto_resume_count': MAX_AUTO_RESUMES_PER_PAGE,
+            },
+        )
+        auto_resume_taxonworks_harvest(self.schema_name)
+
+        mock_delay.assert_called_once()
+        session.refresh_from_db()
+        self.assertEqual(session.additional_data['auto_resume_count'], 1)
+        self.assertEqual(session.additional_data['auto_resume_page'], 120)

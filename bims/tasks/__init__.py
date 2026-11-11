@@ -27,6 +27,10 @@ from bims.tasks.dataset import retrieve_datasets_from_gbif
 from bims.tasks.harvest_schedule import run_scheduled_gbif_harvest
 from bims.tasks.harvest_worms_species import harvest_worms_species
 from bims.tasks.harvest_taxonworks_species import harvest_taxonworks_species
+from bims.tasks.harvest_taxonworks_species import (
+    auto_resume_taxonworks_harvest,
+    auto_resume_taxonworks_harvest_all_schemas,
+)
 from bims.tasks.harvest_bims_species import harvest_bims_species
 from bims.tasks.gbif_publish import run_scheduled_gbif_publish
 from bims.tasks.prune_outside_boundary import prune_outside_boundary_gbif
