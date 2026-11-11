@@ -62,40 +62,90 @@ def get_taxon_name(base_url: str, project_token: str, taxon_name_id: int) -> Opt
         return None
 
 
-def get_taxon_names_page(base_url: str, project_token: str,
-                         page: int = 1, per_page: int = DEFAULT_PER_PAGE) -> list[dict]:
+class TaxonWorksAPIError(Exception):
+    """Raised when a TaxonWorks API request fails (as opposed to returning
+    an empty result), so callers don't mistake a failure for end-of-data."""
+
+
+def _parse_int_header(resp, name: str) -> Optional[int]:
+    headers = getattr(resp, "headers", None) or {}
+    try:
+        value = headers.get(name)
+        return int(value) if value not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+
+
+def get_taxon_names_page_with_meta(
+        base_url: str, project_token: str,
+        page: int = 1, per_page: int = DEFAULT_PER_PAGE,
+        taxon_name_id: Optional[int] = None,
+) -> tuple[list[dict], Optional[int]]:
+    """
+    Fetch one page of taxon names.
+
+    If *taxon_name_id* is given, only that name's descendants are returned
+    (the name itself is not included by the TaxonWorks API).
+
+    Returns ``(records, total_pages)``; ``total_pages`` comes from the
+    ``pagination-total-pages`` response header and is ``None`` if absent.
+    Raises :class:`TaxonWorksAPIError` if the request fails.
+    """
     url = f"{taxonworks_api_base_url(base_url)}/taxon_names"
-    params = {
-        "project_token": project_token,
-        "page": page,
-        "per": per_page,
-    }
+    params = [
+        ("project_token", project_token),
+        ("page", page),
+        ("per", per_page),
+    ]
+    if taxon_name_id:
+        params.append(("taxon_name_id[]", int(taxon_name_id)))
+        params.append(("descendants", "true"))
     try:
         time.sleep(REQUEST_DELAY)
         resp = _http.get(url, params=params, timeout=60)
         resp.raise_for_status()
         data = resp.json()
-        return data if isinstance(data, list) else []
     except Exception as exc:
-        logger.warning("TaxonWorks get_taxon_names_page(page=%s) failed: %s", page, exc)
-        return []
+        raise TaxonWorksAPIError(
+            f"get_taxon_names_page(page={page}) failed: {exc}"
+        ) from exc
+    if not isinstance(data, list):
+        raise TaxonWorksAPIError(
+            f"get_taxon_names_page(page={page}) returned unexpected "
+            f"payload type {type(data).__name__}"
+        )
+    return data, _parse_int_header(resp, "pagination-total-pages")
+
+
+def get_taxon_names_page(base_url: str, project_token: str,
+                         page: int = 1, per_page: int = DEFAULT_PER_PAGE,
+                         taxon_name_id: Optional[int] = None) -> list[dict]:
+    """Fetch one page of taxon names. Raises TaxonWorksAPIError on failure."""
+    records, _ = get_taxon_names_page_with_meta(
+        base_url, project_token, page=page, per_page=per_page,
+        taxon_name_id=taxon_name_id,
+    )
+    return records
 
 
 def get_all_taxon_names(base_url: str, project_token: str,
-                        per_page: int = DEFAULT_PER_PAGE) -> list[dict]:
+                        per_page: int = DEFAULT_PER_PAGE,
+                        taxon_name_id: Optional[int] = None) -> list[dict]:
     results = []
     page = 1
     while True:
-        items = get_taxon_names_page(
+        items, total_pages = get_taxon_names_page_with_meta(
             base_url=base_url,
             project_token=project_token,
             page=page,
             per_page=per_page,
+            taxon_name_id=taxon_name_id,
         )
-        if not items:
-            break
         results.extend(items)
-        if len(items) < per_page:
+        if total_pages is not None:
+            if page >= total_pages:
+                break
+        elif len(items) < per_page:
             break
         page += 1
     return results

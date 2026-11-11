@@ -3158,15 +3158,45 @@ class HarvestSessionAdmin(admin.ModelAdmin):
             return
 
         harvest_session = queryset.first()
+        was_finished = harvest_session.finished or harvest_session.canceled
 
-        harvest_session.canceled = False
-        harvest_session.finished = False
-        harvest_session.save()
+        if harvest_session.category != 'taxonworks':
+            harvest_session.canceled = False
+            harvest_session.finished = False
+            harvest_session.save()
 
         schema_name = connection.schema_name
 
         full_message = 'Resumed'
-        if harvest_session.category == 'worms':
+        if harvest_session.category == 'taxonworks':
+            from bims.tasks.harvest_taxonworks_species import (
+                harvest_taxonworks_species,
+                taxonworks_session_is_stalled,
+            )
+            if not was_finished and not taxonworks_session_is_stalled(harvest_session):
+                self.message_user(
+                    request,
+                    'This TaxonWorks harvest still appears to be running '
+                    '(its log was updated recently), not resuming.',
+                    level=messages.ERROR,
+                )
+                return
+            additional = dict(harvest_session.additional_data or {})
+            additional.pop('auto_resume_count', None)
+            additional.pop('auto_resume_page', None)
+            harvest_session.additional_data = additional
+            harvest_session.canceled = False
+            harvest_session.finished = False
+            harvest_session.save()
+            harvest_taxonworks_species.delay(
+                harvest_session.id,
+                schema_name=schema_name,
+            )
+            full_message = (
+                f"Resumed TaxonWorks harvest from page "
+                f"{additional.get('current_page', 1)}"
+            )
+        elif harvest_session.category == 'worms':
             from bims.tasks.harvest_worms_species import harvest_worms_species
             harvest_worms_species.delay(
                 harvest_session.id,
