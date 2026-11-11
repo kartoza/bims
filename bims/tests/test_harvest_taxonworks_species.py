@@ -1103,8 +1103,10 @@ class TestAutoResumeTaxonWorksHarvest(FastTenantTestCase):
     @mock.patch(_PATCH_DELAY)
     def test_stalled_session_is_resumed(self, mock_delay):
         from bims.tasks.harvest_taxonworks_species import (
-            STALL_SECONDS, auto_resume_taxonworks_harvest,
-            taxonworks_session_is_stalled,
+            auto_resume_taxonworks_harvest,
+        )
+        from bims.utils.harvest_resume import (
+            STALL_SECONDS, session_is_stalled as taxonworks_session_is_stalled,
         )
         session = self._make_session(STALL_SECONDS + 60)
         auto_resume_taxonworks_harvest(self.schema_name)
@@ -1122,8 +1124,9 @@ class TestAutoResumeTaxonWorksHarvest(FastTenantTestCase):
     @mock.patch(_PATCH_DELAY)
     def test_active_finished_and_other_sessions_ignored(self, mock_delay):
         from bims.tasks.harvest_taxonworks_species import (
-            STALL_SECONDS, auto_resume_taxonworks_harvest,
+            auto_resume_taxonworks_harvest,
         )
+        from bims.utils.harvest_resume import STALL_SECONDS
         self._make_session(60)  # still running
         self._make_session(STALL_SECONDS + 60, finished=True)
         self._make_session(STALL_SECONDS + 60, canceled=True)
@@ -1134,8 +1137,11 @@ class TestAutoResumeTaxonWorksHarvest(FastTenantTestCase):
     @mock.patch(_PATCH_DELAY)
     def test_gives_up_after_repeated_stalls_on_same_page(self, mock_delay):
         from bims.tasks.harvest_taxonworks_species import (
-            MAX_AUTO_RESUMES_PER_PAGE, STALL_SECONDS,
             auto_resume_taxonworks_harvest,
+        )
+        from bims.utils.harvest_resume import (
+            MAX_AUTO_RESUMES_WITHOUT_PROGRESS as MAX_AUTO_RESUMES_PER_PAGE,
+            STALL_SECONDS,
         )
         session = self._make_session(
             STALL_SECONDS + 60,
@@ -1155,8 +1161,11 @@ class TestAutoResumeTaxonWorksHarvest(FastTenantTestCase):
     @mock.patch(_PATCH_DELAY)
     def test_counter_resets_when_page_advanced(self, mock_delay):
         from bims.tasks.harvest_taxonworks_species import (
-            MAX_AUTO_RESUMES_PER_PAGE, STALL_SECONDS,
             auto_resume_taxonworks_harvest,
+        )
+        from bims.utils.harvest_resume import (
+            MAX_AUTO_RESUMES_WITHOUT_PROGRESS as MAX_AUTO_RESUMES_PER_PAGE,
+            STALL_SECONDS,
         )
         session = self._make_session(
             STALL_SECONDS + 60,

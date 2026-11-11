@@ -17,6 +17,22 @@ CELERY_BEAT_SCHEDULE = {
             'queue': 'geocontext'
         }
     },
+    'resume_taxonworks_harvesters': {
+        'task': 'bims.tasks.auto_resume_taxonworks_harvest_all_schemas',
+        'schedule': 300,
+        'options': {
+            'retry': False,
+            'queue': 'update'
+        }
+    },
+    'resume_worms_harvesters': {
+        'task': 'bims.tasks.auto_resume_worms_harvest_all_schemas',
+        'schedule': 300,
+        'options': {
+            'retry': False,
+            'queue': 'update'
+        }
+    },
     # 'resume_harvesters': {
     #     'task': 'bims.tasks.auto_resume_harvest_all_schemas',
     #     'schedule': 300,

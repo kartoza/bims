@@ -26,6 +26,10 @@ from bims.tasks.caches import reset_caches
 from bims.tasks.dataset import retrieve_datasets_from_gbif
 from bims.tasks.harvest_schedule import run_scheduled_gbif_harvest
 from bims.tasks.harvest_worms_species import harvest_worms_species
+from bims.tasks.harvest_worms_species import (
+    auto_resume_worms_harvest,
+    auto_resume_worms_harvest_all_schemas,
+)
 from bims.tasks.harvest_taxonworks_species import harvest_taxonworks_species
 from bims.tasks.harvest_taxonworks_species import (
     auto_resume_taxonworks_harvest,
