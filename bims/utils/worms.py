@@ -41,8 +41,19 @@ def _build_session() -> requests.Session:
 _http = _build_session()
 
 
-def get_aphia_record(aphia_id: int) -> Optional[dict]:
-    """Fetch a single AphiaRecord from WoRMS by AphiaID."""
+class WormsAPIError(Exception):
+    """Raised when a WoRMS API request fails (as opposed to returning no
+    data), so callers don't mistake a failure for "no children"."""
+
+
+def get_aphia_record(aphia_id: int, raise_on_error: bool = False) -> Optional[dict]:
+    """
+    Fetch a single AphiaRecord from WoRMS by AphiaID.
+
+    Returns None when WoRMS has no record for the ID. On request failure it
+    also returns None, unless *raise_on_error* is True, in which case
+    :class:`WormsAPIError` is raised.
+    """
     url = f"{WORMS_API_BASE}/AphiaRecordByAphiaID/{aphia_id}"
     try:
         resp = _http.get(url, timeout=30)
@@ -51,6 +62,10 @@ def get_aphia_record(aphia_id: int) -> Optional[dict]:
         resp.raise_for_status()
         return resp.json()
     except Exception as exc:
+        if raise_on_error:
+            raise WormsAPIError(
+                f"get_aphia_record({aphia_id}) failed: {exc}"
+            ) from exc
         logger.warning("WoRMS get_aphia_record(%s) failed: %s", aphia_id, exc)
         return None
 
@@ -58,7 +73,10 @@ def get_aphia_record(aphia_id: int) -> Optional[dict]:
 def get_aphia_children(aphia_id: int, marine_only: bool = False) -> list:
     """
     Fetch all direct children of an AphiaID, auto-paging.
-    Returns a flat list of AphiaRecord dicts.
+    Returns a flat list of AphiaRecord dicts (empty if it has no children).
+
+    Raises :class:`WormsAPIError` if any page fails, rather than returning a
+    partial list, so a failed request can't silently drop part of the tree.
     """
     results = []
     offset = 1
@@ -76,18 +94,21 @@ def get_aphia_children(aphia_id: int, marine_only: bool = False) -> list:
                 break
             resp.raise_for_status()
             page = resp.json()
-            if not page:
-                break
-            results.extend(page)
-            if len(page) < PAGE_SIZE:
-                break
-            offset += PAGE_SIZE
         except Exception as exc:
-            logger.warning(
-                "WoRMS get_aphia_children(%s, offset=%s) failed: %s",
-                aphia_id, offset, exc,
-            )
+            raise WormsAPIError(
+                f"get_aphia_children({aphia_id}, offset={offset}) failed: {exc}"
+            ) from exc
+        if not page:
             break
+        if not isinstance(page, list):
+            raise WormsAPIError(
+                f"get_aphia_children({aphia_id}, offset={offset}) returned "
+                f"unexpected payload type {type(page).__name__}"
+            )
+        results.extend(page)
+        if len(page) < PAGE_SIZE:
+            break
+        offset += PAGE_SIZE
     return results
 
 

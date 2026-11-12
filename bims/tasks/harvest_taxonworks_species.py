@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import time
 
 from celery import shared_task
@@ -17,38 +16,6 @@ PER_PAGE = 50
 # retries in bims.utils.taxonworks) before the harvest is stopped.
 PAGE_FETCH_ATTEMPTS = 4
 PAGE_FETCH_BACKOFF_SECONDS = 30
-
-# An unfinished session whose log hasn't been written for this long is
-# considered dead (e.g. the worker was restarted by a deployment). The task
-# writes a log line for every record and every retry, so a live harvest never
-# stays silent this long.
-STALL_SECONDS = 30 * 60
-# Stop auto-resuming a session that keeps dying on the same page.
-MAX_AUTO_RESUMES_PER_PAGE = 5
-
-
-def taxonworks_session_seconds_since_activity(session) -> float | None:
-    """Seconds since the session's log file was last written, or None."""
-    try:
-        if session.log_file:
-            return time.time() - os.path.getmtime(session.log_file.path)
-    except (OSError, ValueError):
-        pass
-    return None
-
-
-def taxonworks_session_is_stalled(session) -> bool:
-    idle = taxonworks_session_seconds_since_activity(session)
-    return idle is None or idle >= STALL_SECONDS
-
-
-def _append_session_log(session, msg: str):
-    ts = timezone.now().isoformat(timespec="seconds")
-    try:
-        with open(session.log_file.path, "a") as fh:
-            fh.write(f"[{ts}] {msg}\n")
-    except Exception:
-        pass
 
 
 class _SessionTaxonWorksTaxaProcessor:
@@ -415,59 +382,20 @@ def harvest_taxonworks_species(session_id: int, schema_name: str):
 )
 def auto_resume_taxonworks_harvest(schema_name: str):
     """Re-dispatch TaxonWorks harvest sessions that stopped mid-run."""
-    from bims.models import HarvestSession
+    from bims.utils.harvest_resume import auto_resume_stalled_sessions
 
     with schema_context(schema_name):
-        sessions = HarvestSession.objects.filter(
+        auto_resume_stalled_sessions(
+            schema_name,
             category='taxonworks',
-            finished=False,
-            canceled=False,
-        ).exclude(log_file='').exclude(log_file__isnull=True)
-
-        for session in sessions:
-            if not taxonworks_session_is_stalled(session):
-                continue
-
-            additional = dict(session.additional_data or {})
-            current_page = additional.get('current_page', 1)
-            if additional.get('auto_resume_page') != current_page:
-                additional['auto_resume_page'] = current_page
-                additional['auto_resume_count'] = 0
-            count = additional.get('auto_resume_count', 0)
-
-            if count >= MAX_AUTO_RESUMES_PER_PAGE:
-                msg = (
-                    f"Auto-resume gave up: harvest stopped "
-                    f"{count} times at page {current_page}"
-                )
-                _append_session_log(session, msg)
-                HarvestSession.objects.filter(id=session.id).update(
-                    status=f"Failed at page {current_page}: {msg}",
-                    finished=True,
-                    additional_data=additional,
-                )
-                logger.warning(
-                    "TaxonWorks harvest session=%s: %s", session.id, msg
-                )
-                continue
-
-            additional['auto_resume_count'] = count + 1
-            HarvestSession.objects.filter(id=session.id).update(
-                additional_data=additional,
-            )
-            # Writing to the log also refreshes its mtime, so the next
-            # check doesn't dispatch the session a second time.
-            _append_session_log(
-                session,
-                f"Harvest appears to have stopped - auto-resuming from page "
-                f"{current_page} (attempt {count + 1}/"
-                f"{MAX_AUTO_RESUMES_PER_PAGE})",
-            )
-            logger.info(
-                "Auto-resuming TaxonWorks harvest session=%s schema=%s",
-                session.id, schema_name,
-            )
-            harvest_taxonworks_species.delay(session.id, schema_name=schema_name)
+            dispatch=lambda sid, schema: harvest_taxonworks_species.delay(
+                sid, schema_name=schema
+            ),
+            progress_marker=lambda data: data.get('current_page', 1),
+            marker_key='auto_resume_page',
+            label='TaxonWorks harvest',
+            describe_position=lambda data: f"at page {data.get('current_page', 1)}",
+        )
 
 
 @shared_task(
@@ -476,14 +404,8 @@ def auto_resume_taxonworks_harvest(schema_name: str):
     ignore_result=True,
 )
 def auto_resume_taxonworks_harvest_all_schemas():
-    from django_tenants.utils import get_public_schema_name, get_tenant_model
+    from bims.utils.harvest_resume import for_each_tenant_schema
 
-    public = get_public_schema_name()
-    for tenant in get_tenant_model().objects.exclude(schema_name=public):
-        try:
-            auto_resume_taxonworks_harvest(tenant.schema_name)
-        except Exception as exc:
-            logger.error(
-                "auto_resume_taxonworks_harvest failed for %s: %s",
-                tenant.schema_name, exc,
-            )
+    for_each_tenant_schema(
+        auto_resume_taxonworks_harvest, 'auto_resume_taxonworks_harvest'
+    )

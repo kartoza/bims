@@ -84,6 +84,8 @@ class HarvestWormsSpeciesView(UserPassesTestMixin, LoginRequiredMixin, TemplateV
         harvest_synonyms = request.POST.get('harvest_synonyms_for_accepted') == '1'
         # On by default; the form posts '0' only when the box is unticked
         freshwater_only = request.POST.get('freshwater_only', '1') != '0'
+        # Off by default: unaccepted names (synonyms etc.) are not harvested
+        include_unaccepted = request.POST.get('include_unaccepted') == '1'
 
         if not taxon_group_id:
             messages.error(request, 'Please select a taxon group.')
@@ -102,7 +104,11 @@ class HarvestWormsSpeciesView(UserPassesTestMixin, LoginRequiredMixin, TemplateV
             category='worms',
             is_fetching_species=True,
             harvest_synonyms=harvest_synonyms,
-            additional_data={'aphia_id': aphia_id, 'freshwater_only': freshwater_only},
+            additional_data={
+                'aphia_id': aphia_id,
+                'freshwater_only': freshwater_only,
+                'include_unaccepted': include_unaccepted,
+            },
         )
 
         log_folder = os.path.join(settings.MEDIA_ROOT, 'harvest-worms-session-log')

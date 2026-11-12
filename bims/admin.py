@@ -3159,50 +3159,58 @@ class HarvestSessionAdmin(admin.ModelAdmin):
 
         harvest_session = queryset.first()
         was_finished = harvest_session.finished or harvest_session.canceled
-
-        if harvest_session.category != 'taxonworks':
-            harvest_session.canceled = False
-            harvest_session.finished = False
-            harvest_session.save()
-
         schema_name = connection.schema_name
-
         full_message = 'Resumed'
-        if harvest_session.category == 'taxonworks':
-            from bims.tasks.harvest_taxonworks_species import (
-                harvest_taxonworks_species,
-                taxonworks_session_is_stalled,
+
+        if harvest_session.category in ('taxonworks', 'worms'):
+            from bims.utils.harvest_resume import (
+                clear_auto_resume_state,
+                session_is_stalled,
             )
-            if not was_finished and not taxonworks_session_is_stalled(harvest_session):
+            if harvest_session.category == 'taxonworks':
+                from bims.tasks.harvest_taxonworks_species import (
+                    harvest_taxonworks_species as resume_task,
+                )
+                label = 'TaxonWorks'
+            else:
+                from bims.tasks.harvest_worms_species import (
+                    harvest_worms_species as resume_task,
+                )
+                label = 'WoRMS'
+
+            if not was_finished and not session_is_stalled(harvest_session):
                 self.message_user(
                     request,
-                    'This TaxonWorks harvest still appears to be running '
-                    '(its log was updated recently), not resuming.',
+                    f'This {label} harvest still appears to be running '
+                    f'(its log was updated recently), not resuming.',
                     level=messages.ERROR,
                 )
                 return
-            additional = dict(harvest_session.additional_data or {})
-            additional.pop('auto_resume_count', None)
-            additional.pop('auto_resume_page', None)
+            additional = clear_auto_resume_state(harvest_session.additional_data)
             harvest_session.additional_data = additional
             harvest_session.canceled = False
             harvest_session.finished = False
             harvest_session.save()
-            harvest_taxonworks_species.delay(
-                harvest_session.id,
-                schema_name=schema_name,
-            )
-            full_message = (
-                f"Resumed TaxonWorks harvest from page "
-                f"{additional.get('current_page', 1)}"
-            )
-        elif harvest_session.category == 'worms':
-            from bims.tasks.harvest_worms_species import harvest_worms_species
-            harvest_worms_species.delay(
-                harvest_session.id,
-                schema_name=schema_name,
-            )
-        elif harvest_session.is_fetching_species:
+            resume_task.delay(harvest_session.id, schema_name=schema_name)
+            if harvest_session.category == 'taxonworks':
+                full_message = (
+                    f"Resumed TaxonWorks harvest from page "
+                    f"{additional.get('current_page', 1)}"
+                )
+            else:
+                full_message = (
+                    f"Resumed WoRMS harvest "
+                    f"({len(additional.get('processed_aphia_ids') or [])} "
+                    f"records already processed will be skipped)"
+                )
+            self.message_user(request, full_message)
+            return
+
+        harvest_session.canceled = False
+        harvest_session.finished = False
+        harvest_session.save()
+
+        if harvest_session.is_fetching_species:
             harvest_gbif_species.delay(
                 harvest_session.id,
                 schema_name

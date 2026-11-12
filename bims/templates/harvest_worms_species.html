@@ -118,6 +118,31 @@
                         </div>
                     </div>
 
+                    <!-- Include unaccepted names -->
+                    <div class="form-group row" style="margin-top: 20px;">
+                        <label class="col-sm-2 col-form-label"></label>
+                        <div class="col-sm-10">
+                            <div class="form-check">
+                                <input
+                                    class="form-check-input"
+                                    type="checkbox"
+                                    id="include-unaccepted"
+                                    name="include_unaccepted"
+                                    value="1"
+                                    {% if request.POST.include_unaccepted == '1' %}checked{% endif %}
+                                >
+                                <label class="form-check-label" for="include-unaccepted">
+                                    Include unaccepted names
+                                </label>
+                                <small class="form-text text-muted">
+                                    When unchecked (default), names that WoRMS marks as
+                                    "unaccepted" (synonyms, superseded combinations, misspellings, etc.)
+                                    are skipped and only accepted taxa are imported.
+                                </small>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- Harvest synonyms -->
 {#                    <div class="form-group row" style="margin-top: 20px;">#}
 {#                        <label class="col-sm-2 col-form-label"></label>#}
