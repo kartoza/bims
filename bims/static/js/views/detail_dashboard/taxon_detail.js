@@ -133,7 +133,6 @@ define(['backbone', 'shared', 'underscore', 'jquery', 'chartJs', 'fileSaver', 'h
                         url += '?';
                     }
                     url += '&downloadRequestId=' + downloadRequestId + '&downloadFormat='+format
-                    console.log(url)
                     $.get({
                         url: url,
                         dataType: 'json',
