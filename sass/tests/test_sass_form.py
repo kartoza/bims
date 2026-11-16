@@ -7,7 +7,8 @@ from django_tenants.test.client import TenantClient
 from bims.models.survey import Survey
 from bims.tests.model_factories import (
     UserF,
-    LocationSiteF
+    LocationSiteF,
+    SourceReferenceF,
 )
 from sass.tests.model_factories import (
     SiteVisitF,
@@ -38,7 +39,8 @@ class TestSassFormView(FastTenantTestCase):
                 'sass_id': sass_site_visit.id
             }), {
                 'owner': user.id,
-                'date': date
+                'date': date,
+                'source_reference': SourceReferenceF.create().id,
             }
         )
 
@@ -50,6 +52,22 @@ class TestSassFormView(FastTenantTestCase):
                 site=site
             ).exists()
         )
+
+    def test_post_without_source_reference_is_rejected(self):
+        user = UserF.create()
+        self.client.login(username=user.username, password='password')
+        site = LocationSiteF.create()
+        for source_reference in ('', 'abc', '999999'):
+            response = self.client.post(
+                reverse('sass-form-page', kwargs={'site_id': site.id}),
+                {
+                    'owner': user.id,
+                    'date': '2022/02/02',
+                    'source_reference': source_reference,
+                }
+            )
+            self.assertEqual(response.status_code, 400)
+        self.assertFalse(Survey.objects.filter(site=site).exists())
 
 
 class TestOwnerOrganisationSassForm(FastTenantTestCase):
@@ -143,6 +161,7 @@ class TestOwnerOrganisationSassForm(FastTenantTestCase):
                 'owner': user.id,
                 'date': '2023/06/01',
                 'owner_organisation': 'FieldOrg',
+                'source_reference': SourceReferenceF.create().id,
                 'taxon_list-{}-TOT'.format(sass_taxon.id): abundance.abc,
             }
         )

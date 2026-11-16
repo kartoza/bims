@@ -18,8 +18,13 @@ from django.db.models import F, Q
 from django.shortcuts import get_object_or_404
 from django.urls import reverse, reverse_lazy
 from django.contrib.gis.measure import Distance
-from django.http import HttpResponseRedirect, Http404
+from django.http import (
+    HttpResponseRedirect, Http404, HttpResponseBadRequest
+)
 from bims.utils.get_key import get_key
+from bims.utils.source_reference import (
+    get_required_source_reference, SOURCE_REFERENCE_REQUIRED_MESSAGE
+)
 from bims.models import (
     LocationSite, Biotope, SamplingMethod,
     BiologicalCollectionRecord,
@@ -604,7 +609,11 @@ class CollectionFormView(TemplateView, SessionFormMixin):
     def post(self, request, *args, **kwargs):
         post_data = request.POST.dict()
         post_data['source_site'] = Site.objects.get_current().id
-        post_data['source_reference_id'] = request.POST.get('source_reference')
+        source_reference = get_required_source_reference(
+            request.POST.get('source_reference'))
+        if not source_reference:
+            return HttpResponseBadRequest(SOURCE_REFERENCE_REQUIRED_MESSAGE)
+        post_data['source_reference_id'] = source_reference.id
         survey = add_survey_occurrences(
             self, post_data, request.FILES.getlist('site-images'))
 
