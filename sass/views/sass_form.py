@@ -22,13 +22,16 @@ from django.template.loader import render_to_string
 from django.core.mail import EmailMultiAlternatives
 from django.contrib.auth.mixins import UserPassesTestMixin
 from django.contrib import messages
-from django.http import HttpResponseRedirect
+from django.http import HttpResponseRedirect, HttpResponseBadRequest
 from django.views.decorators.csrf import csrf_exempt
 from django.conf import settings
 
 from geonode.people.models import Profile
 
 from bims.models import BaseMapLayer, SourceReference
+from bims.utils.source_reference import (
+    get_required_source_reference, SOURCE_REFERENCE_REQUIRED_MESSAGE
+)
 from bims.models.location_site import (
     LocationSite,
     location_site_post_save_handler
@@ -356,6 +359,9 @@ class SassFormView(UserPassesTestMixin, TemplateView, SessionFormMixin):
     def post(self, request, *args, **kwargs):
         site_id = kwargs.get('site_id', None)
         sass_id = kwargs.get('sass_id', None)
+        if not get_required_source_reference(
+                request.POST.get('source_reference')):
+            return HttpResponseBadRequest(SOURCE_REFERENCE_REQUIRED_MESSAGE)
         signals.post_save.disconnect(
             location_site_post_save_handler,
         )

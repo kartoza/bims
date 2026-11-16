@@ -396,7 +396,7 @@ $(function () {
                 $input.unbind();
             }
         });
-        if (!$('#selected-source-reference').val()) {
+        if (!$('#selected-source-reference-id').val()) {
             isError = true;
             alertMessage = 'You must select a source reference <br/>';
         }

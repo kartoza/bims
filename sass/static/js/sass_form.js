@@ -15,7 +15,7 @@ $('#submit').click(function () {
             scrollTop: 0}, 500);
         return false;
     }
-    if (!$('#selected-source-reference').val()) {
+    if (!$('#selected-source-reference-id').val()) {
         $frontendAlert.html('You must select a source reference').show();
         $('html, body').animate({
             scrollTop: 0}, 500);

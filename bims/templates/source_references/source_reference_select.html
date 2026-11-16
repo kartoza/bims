@@ -6,7 +6,7 @@
 
    <div class="form-group row">
        <label for="start-time"
-              class="col-sm-2 col-form-label col-form-label">Selected Source Reference</label>
+              class="col-sm-2 col-form-label col-form-label{% if source_reference_required %} required-text{% endif %}">Selected Source Reference</label>
        <div class="col-sm-10">
            <div class="input-group">
                <textarea class="form-control" id="selected-source-reference" name="source_reference_title" disabled>{% if source_reference %}({{ source_reference.0.reference_type }}) - {{ source_reference.0 }}{% endif %}</textarea>
