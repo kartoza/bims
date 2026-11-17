@@ -12,8 +12,10 @@ from django.views.generic import TemplateView, View
 
 from bims.models.location_site import LocationSite
 from bims.utils.location_site import overview_site_detail
+from bims.views.data_upload import DataUploadView
 from climate.views import can_edit_station
 from groundwater.models import GroundwaterReading
+from groundwater.tasks import groundwater_upload
 from groundwater.utils import (
     availability, build_chart_payload, monthly_summary, summary_stats,
     HOURLY_WINDOW_DAYS,
@@ -126,6 +128,19 @@ class GroundwaterDownloadView(View):
                 reading.electrical_conductivity, reading.flag
             ])
         return response
+
+
+class GroundwaterUploadView(DataUploadView):
+    """Upload hourly groundwater readings from a CSV or Excel file."""
+    template_name = 'groundwater/uploader.html'
+    upload_task = groundwater_upload
+    category = 'groundwater'
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        # Timestamps without a UTC offset are read in this time zone
+        context['time_zone'] = timezone.get_current_timezone_name()
+        return context
 
 
 class GroundwaterDashboardMultipleSitesView(TemplateView):

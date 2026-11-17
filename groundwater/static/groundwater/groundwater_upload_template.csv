@@ -1,0 +1,4 @@
+Station,Latitude,Longitude,Timestamp,Water level,Water temperature,Electrical conductivity,Flag
+Example Borehole,-24.993,31.589,2025-01-01 00:00,12.48,24.6,652.1,
+Example Borehole,-24.993,31.589,2025-01-01 01:00,12.49,24.6,651.8,
+Example Borehole,-24.993,31.589,2025-01-01 02:00,12.49,-999,651.5,Temperature sensor fault

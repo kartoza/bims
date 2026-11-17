@@ -128,6 +128,15 @@
         </div>
         <% } %>
 
+        <% if (is_groundwater_enabled) { %>
+        <div class="row groundwater-data-row" style="padding: 10px; display: none;">
+                <div class="col-sm-12" style="padding-right: 15px">
+                    <button class="fbis-button-small sp-groundwater-dashboard"
+                             style="width: 100%; height: 30px">Groundwater Data</button>
+                </div>
+        </div>
+        <% } %>
+
         <% if (is_pesticide_dashboard_enabled) { %>
         <div class="row" style="padding: 10px;">
             <div class="col-sm-12">

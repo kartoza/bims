@@ -197,6 +197,7 @@ class SiteSettingAdmin(PreferencesAdmin):
                 "enable_sass",
                 "enable_water_temperature",
                 "enable_climate_data",
+                "enable_groundwater_data",
                 "enable_harvest_worms",
                 "enable_harvest_taxonworks",
                 "enable_checklist_versioning",

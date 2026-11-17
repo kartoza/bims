@@ -408,6 +408,7 @@ define(['backbone', 'shared', 'chartJs', 'jquery'], function (Backbone, Shared, 
                 is_sass_enabled: is_sass_enabled,
                 is_water_temperature_enabled: is_water_temperature_enabled,
                 is_climate_enabled: is_climate_enabled,
+                is_groundwater_enabled: typeof is_groundwater_enabled !== 'undefined' && is_groundwater_enabled,
                 is_pesticide_dashboard_enabled: is_pesticide_dashboard_enabled,
                 sass_exist: data.sass_exist,
                 add_data: true,
@@ -506,12 +507,17 @@ define(['backbone', 'shared', 'chartJs', 'jquery'], function (Backbone, Shared, 
             if ($('#climate-module').is(':checked')) {
                 $('.climate-data-row').show();
             }
+            // Show groundwater button only when groundwater module is selected
+            if ($('#groundwater-module').is(':checked')) {
+                $('.groundwater-data-row').show();
+            }
             $('input[name="module"]').on('change', function () {
-                if ($(this).val() === 'climate') {
-                    $('.climate-data-row').show();
-                } else {
-                    $('.climate-data-row').hide();
-                }
+                $('.climate-data-row').toggle($(this).val() === 'climate');
+                $('.groundwater-data-row').toggle($(this).val() === 'groundwater');
+            });
+
+            $('.sp-groundwater-dashboard').click(function (e) {
+                window.location.href = '/groundwater/' + self.siteId + '/';
             });
 
             $('.sp-climate-dashboard').click(function (e) {

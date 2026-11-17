@@ -1,0 +1,201 @@
+{% extends 'main_base.html' %}
+{% load static %}
+
+{% block subtitle %}
+    Groundwater Data Uploader
+{% endblock %}
+
+{% block head %}
+    <!-- Custom styles for this template -->
+    <link href="{% static "css/csv_uploader.css" %}" rel="stylesheet">
+{% endblock %}
+
+{% block body_content %}
+    <div class="loading">Loading&#8230;</div>
+    <div class="container">
+        <div class="jumbotron csv-uploader-wrapper">
+            <div class="help-block-space"></div>
+            <h3>Upload Groundwater Data</h3>
+            <div id="csv-alert" class="alert alert-warning" role="alert" style="display: none;"></div>
+
+            <div class="modal-body">
+                <form action="{{ request.path }}" method="post" id="groundwater-upload-form" novalidate enctype="multipart/form-data">
+                    {% csrf_token %}
+                    <div class="help-block">
+                        <div class="help-block-space"></div>
+                        <strong>Upload Instructions:</strong>
+                        <ul>
+                            <li>File must be in CSV or Excel format, with one row per station per hourly reading</li>
+                            <li>Required headers: Station, Latitude, Longitude, Timestamp</li>
+                            <li>Measurement headers, at least one is required: Water level (m below ground level), Water temperature (&deg;C), Electrical conductivity (&micro;S/cm)</li>
+                            <li>Optional header: Flag</li>
+                            <li>Timestamp format: YYYY-MM-DD HH:MM, for example 2025-01-01 13:00. Times without a UTC offset are in {{ time_zone }}</li>
+                            <li>Empty values and -999 are stored as missing</li>
+                            <li>A station is matched by name. If it doesn't exist, it is created with the coordinates of its first row</li>
+                            <li>A reading for a station and timestamp that already exists is updated</li>
+                        </ul>
+
+                        <div class="help-block-space"></div>
+                        <strong>Example CSV Format:</strong>
+                        <a href="{% static 'groundwater/groundwater_upload_template.csv' %}" download class="pull-right">
+                            <i class="fa fa-download"></i> Download template
+                        </a>
+                        <pre style="background: #f5f5f5; padding: 10px; border-radius: 4px; font-size: 12px;">
+Station,Latitude,Longitude,Timestamp,Water level,Water temperature,Electrical conductivity,Flag
+Example Borehole,-24.993,31.589,2025-01-01 00:00,12.48,24.6,652.1,
+Example Borehole,-24.993,31.589,2025-01-01 01:00,12.49,24.6,651.8,</pre>
+
+                        {% if not upload_sessions %}
+                        <div class="help-block-space"></div>
+                        <div class="help-block-space"></div>
+                        <div class="form-group row">
+                            <label class="col-sm-2 col-form-label" for="file"><b>Upload CSV/Excel file</b></label>
+                            <div class="col-sm-10">
+                                <input id="fileupload" type="file" name="csv_file" accept=".csv,.xlsx,.xls">
+                            </div>
+                        </div>
+                        <button class="btn btn-primary" type="submit">Upload</button>
+                        {% endif %}
+                    </div>
+                </form>
+
+                {# Upload sessions #}
+                {% if upload_sessions %}
+                    <div class="upload-progress-container">
+                        <h5>Current progress:</h5>
+                        {% for upload_session in upload_sessions %}
+                            <div class="card">
+                                <div class="card-body">
+                                    <h5 class="card-title">File: {{ upload_session.process_file.name }}</h5>
+                                    <p>Uploaded at {{ upload_session.uploaded_at }}</p>
+                                    <p class="card-text">Progress: <span class="progress-text">{% if upload_session.progress %}{{ upload_session.progress }}{% else %}Processing{% endif %}</span></p>
+                                    <div class="progress">
+                                        <div data-progress="{{ upload_session.progress }}" data-id="{{ upload_session.id }}"
+                                             class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar"
+                                             aria-valuenow="0" aria-valuemin="0" aria-valuemax="100" style="width: 0"></div>
+                                    </div>
+                                    <br/>
+                                    <button class="btn btn-danger" data-toggle="modal" data-target="#cancelModal" data-id="{{ upload_session.id }}">Cancel</button>
+                                </div>
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% endif %}
+
+                {# Finished sessions #}
+                {% if finished_sessions %}
+                    <div class="upload-progress-container">
+                        <h5>Finished upload sessions:</h5>
+                        {% for upload_session in finished_sessions %}
+                            <div class="card">
+                                <div class="card-body">
+                                    <h5 class="card-title">File: {{ upload_session.process_file.name }}</h5>
+                                    <p>Uploaded at {{ upload_session.uploaded_at }}</p>
+                                    <p class="card-text">Result: {% if upload_session.progress %}{{ upload_session.progress }}{% else %}Processing{% endif %}</p>
+                                    {% if upload_session.error_file %}
+                                        <a href="{{ upload_session.error_file.url }}" target="_blank" class="btn btn-danger">Error File</a>
+                                    {% endif %}
+                                    {% if upload_session.success_file %}
+                                        <a href="{{ upload_session.success_file.url }}" target="_blank" class="btn btn-success">Success File</a>
+                                    {% endif %}
+                                    {% if upload_session.canceled %}
+                                        <p style="color:red">Canceled</p>
+                                    {% endif %}
+                                </div>
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Cancel Modal -->
+    <div class="modal fade" id="cancelModal" tabindex="-1" role="dialog" aria-labelledby="cancelModalTitle" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="cancelModalTitle">Cancel session</h5>
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                        <span aria-hidden="true">&times;</span>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    Are you sure you want to cancel this upload session?
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
+                    <form method="post" action="{{ request.path }}">
+                        {% csrf_token %}
+                        <input type="hidden" name="cancel" value="True">
+                        <input type="hidden" id="canceled_session_id" name="canceled_session_id" value="">
+                        <button type="submit" class="btn btn-danger">Cancel Session</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+{% endblock %}
+
+{% block foot %}
+    {{ block.super }}
+
+    <script src="{% static "js/libs/jquery/jquery-3.3.1.min.js" %}"></script>
+    <script src="{% static "js/libs/bootstrap-4.0.0/js/bootstrap.min.js" %}"></script>
+    <script>
+      (function ($) {
+        'use strict';
+
+        const updateUrl = '/api/upload-status/';
+
+        function renderProgress($bar, progressText) {
+          $bar.closest('.card-body').find('.progress-text').text(progressText || 'Processing');
+          if (progressText && progressText.indexOf('/') > -1) {
+            const [indexProgress, totalProgress] = progressText.split('/');
+            const percentProgress = (parseInt(indexProgress, 10) / parseInt(totalProgress, 10)) * 100;
+            $bar.css({ width: `${percentProgress}%` });
+            $bar.attr('aria-valuenow', percentProgress);
+          } else if (progressText && progressText.indexOf('%') > -1) {
+            const percentProgress = parseFloat(progressText.replace('%', ''));
+            $bar.css({ width: `${percentProgress}%` });
+            $bar.attr('aria-valuenow', percentProgress);
+          }
+        }
+
+        function pollProgress(sessionId, $bar) {
+          setTimeout(function () {
+            $.get(`${updateUrl}${sessionId}/`).then(function (response) {
+              if (response.processed || response.canceled) {
+                window.location.reload();
+                return;
+              }
+              renderProgress($bar, response.progress);
+              pollProgress(sessionId, $bar);
+            }).fail(function () {
+              // Retry after a delay if the request fails temporarily.
+              pollProgress(sessionId, $bar);
+            });
+          }, 1000);
+        }
+
+        $(function () {
+          $('.progress-bar').each(function () {
+            const $bar = $(this);
+            const progressText = $bar.data('progress');
+            const sessionId = $bar.data('id');
+            if (!sessionId) {
+              return;
+            }
+            renderProgress($bar, progressText);
+            pollProgress(sessionId, $bar);
+          });
+
+          $('#cancelModal').on('show.bs.modal', function (event) {
+            const trigger = $(event.relatedTarget);
+            const sessionId = trigger.data('id');
+            $('#canceled_session_id').val(sessionId);
+          });
+        });
+      })(jQuery);
+    </script>
+{% endblock %}

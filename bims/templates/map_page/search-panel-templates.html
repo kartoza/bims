@@ -146,6 +146,10 @@
                     <input class="radio-module" type="radio" id="climate-module" name="module" value="climate">
                     <label class="form-check-label" for="climate-module">Climate Data</label>
                 </div>
+                <div class="form-check module-radio-wrapper" id="groundwater-module-wrapper" style="display: none;">
+                    <input class="radio-module" type="radio" id="groundwater-module" name="module" value="groundwater">
+                    <label class="form-check-label" for="groundwater-module">Groundwater (time series)</label>
+                </div>
             </div>
 
         <div class="source-collection-wrapper" id="data-source-container">
@@ -1464,6 +1468,7 @@
             <% if (module === "water_temperature") { %>  <%= total_thermal %> water temperature data <% } %>
             <% if (module === "physico_chemistry") { %>  <%= total_chemical_records %> physico-chemical data <% } %>
             <% if (module === "climate") { %>  <%= total_climate_records %> climate records <% } %>
+            <% if (module === "groundwater") { %>  <%= total_groundwater_records %> groundwater readings <% } %>
         </a>
     </div>
 </script>

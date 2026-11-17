@@ -62,7 +62,9 @@ NARROWING_PARAMS = (
 )
 
 # Search modules that do not return biological collection records
-UNSUPPORTED_MODULES = ('water_temperature', 'physico_chemistry', 'climate')
+UNSUPPORTED_MODULES = (
+    'water_temperature', 'physico_chemistry', 'climate', 'groundwater'
+)
 
 # Ids checked for visibility in one query
 VISIBILITY_CHUNK = 10000

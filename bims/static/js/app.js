@@ -146,6 +146,9 @@ require([
         if (typeof is_climate_enabled !== 'undefined' && is_climate_enabled) {
             $('#climate-module-wrapper').show();
         }
+        if (typeof is_groundwater_enabled !== 'undefined' && is_groundwater_enabled) {
+            $('#groundwater-module-wrapper').show();
+        }
 
         showSiteNotice();
     });

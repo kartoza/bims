@@ -85,6 +85,7 @@
         const is_sass_enabled = {% if preferences.SiteSetting.enable_sass %}true{% else %}false{% endif %};
         const is_water_temperature_enabled = {% if preferences.SiteSetting.enable_water_temperature %}true{% else %}false{% endif %};
         const is_climate_enabled = {% if preferences.SiteSetting.enable_climate_data %}true{% else %}false{% endif %};
+        const is_groundwater_enabled = {% if preferences.SiteSetting.enable_groundwater_data %}true{% else %}false{% endif %};
         const is_pesticide_dashboard_enabled = {% if preferences.SiteSetting.pesticide_quaternary_data_file %}true{% else %}false{% endif %};
         const locationSiteGeoserverLayer = '{{ preferences.SiteSetting.geoserver_location_site_layer }}';
         const defaultWMSSiteParameters = '{{ preferences.SiteSetting.default_location_site_cluster }}';
