@@ -56,18 +56,25 @@
             removeDanglingSitesBtn.textContent = "Delete dangling sites";
             removeDanglingSitesBtn.style.marginLeft = "10px";
             removeDanglingSitesBtn.style.marginTop = "10px";
+            removeDanglingSitesBtn.style.setProperty('font-size', '9pt', 'important');
 
             removeDanglingSitesBtn.addEventListener("click", function (event) {
                 event.preventDefault();
 
-                if (confirm("Are you sure you want to delete the dangling sites?")) {
+                const dryRun = !!dryRunInput.checked;
+                const confirmMsg = dryRun
+                    ? "Run a DRY RUN? No data will be deleted; a report will be emailed to superusers."
+                    : "Are you sure you want to delete the dangling sites?";
+
+                if (confirm(confirmMsg)) {
                     fetch("{% url 'delete_dangling_sites' %}", {
                         method: "POST",
                         headers: {
                             "X-CSRFToken": "{{ csrf_token }}",
                             "Content-Type": "application/json"
                         },
-                        credentials: 'same-origin'
+                        credentials: 'same-origin',
+                        body: JSON.stringify({ dry_run: dryRun })
                     })
                     .then(response => {
                         if (response.ok) {
@@ -87,7 +94,6 @@
                 }
             });
 
-            targetElement.appendChild(removeDanglingSitesBtn);
 
             const harvestIucnBtn = document.createElement('a');
             harvestIucnBtn.href = "{% url 'harvest-iucn-status' %}";
@@ -113,6 +119,10 @@
             outsideWrapper.style.alignItems = 'flex-start';
             outsideWrapper.style.gap = '6px';
             outsideWrapper.style.marginTop = '10px';
+            outsideWrapper.style.border = '1px solid #ccc';
+            outsideWrapper.style.borderRadius = '4px';
+            outsideWrapper.style.padding = '10px';
+            outsideWrapper.style.width = 'fit-content';
 
             const removeOutsideBtn = document.createElement('a');
             removeOutsideBtn.href = '#';
@@ -182,6 +192,7 @@
             // Append in order: button, then label (so label is below)
             outsideWrapper.appendChild(removeOutsideBtn);
             outsideWrapper.appendChild(dryRunLabel);
+            outsideWrapper.appendChild(removeDanglingSitesBtn);
             outsideWrapper.appendChild(clearTaxaBtn);
             outsideWrapper.appendChild(clearGbifDeletedBtn);
             outsideWrapper.appendChild(staleDaysLabel);

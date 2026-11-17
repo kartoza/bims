@@ -211,3 +211,42 @@ class DanglingCleanupTests(FastTenantTestCase):
         self.assertIn("[Acme] Dangling data cleanup report", email.subject)
         self.assertIn("Surveys deleted       : 1/1", email.body)
         self.assertIn("Location sites deleted: 2/2", email.body)
+
+    @patch("bims.tasks.location_site.log")
+    def test_remove_dangling_sites_dry_run_keeps_data(self, _mock_log):
+        self._create_user()
+
+        site_kept = LocationSiteF.create(name="Kept")
+        self._create_full_survey(site_kept)
+
+        site_removed1 = LocationSiteF.create(name="ToRemove-1")
+        site_removed2 = LocationSiteF.create(name="ToRemove-2")
+        dangling_survey = SurveyF.create(date=timezone.now(), site=site_removed2)
+        LocationContextF.create(site=site_removed2)
+
+        orig_tenant = getattr(connection, "tenant", None)
+        connection.tenant = SimpleNamespace(name="Acme")
+        try:
+            remove_dangling_sites(dry_run=True)
+        finally:
+            if orig_tenant is not None:
+                connection.tenant = orig_tenant
+            else:
+                delattr(connection, "tenant")
+
+        # Nothing deleted
+        self.assertEqual(Survey.objects.count(), 2)
+        self.assertEqual(LocationSite.objects.count(), 3)
+
+        # Report reflects what a real run would delete, including the site
+        # that only becomes dangling once its empty survey is removed.
+        self.assertEqual(len(mail.outbox), 1)
+        email: EmailMessage = mail.outbox[0]
+        self.assertIn("[DRY RUN]", email.subject)
+        self.assertIn("Surveys that would be deleted       : 1", email.body)
+        self.assertIn("Location sites that would be deleted: 2", email.body)
+        self.assertIn(str(dangling_survey.id), email.body)
+        self.assertIn(
+            f"Location site IDs: {site_removed1.id}, {site_removed2.id}",
+            email.body,
+        )

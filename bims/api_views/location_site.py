@@ -346,10 +346,15 @@ class DeleteDanglingLocationSites(APIView):
 
     def post(self, request, *args, **kwargs):
         if request.user.is_superuser:
-            remove_dangling_sites.delay()
-            return Response(
-                {"message": "Deleting dangling sites in the background."},
-                status=HTTP_200_OK)
+            dry_run = bool(request.data.get("dry_run", False))
+            remove_dangling_sites.delay(dry_run=dry_run)
+            message = (
+                "Dry run for dangling sites started in the background. "
+                "A report will be emailed to superusers."
+                if dry_run else
+                "Deleting dangling sites in the background."
+            )
+            return Response({"message": message}, status=HTTP_200_OK)
         return Response(
             {"error": "Permission denied."},
             status=HTTP_403_FORBIDDEN)
