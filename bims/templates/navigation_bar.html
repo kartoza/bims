@@ -219,6 +219,9 @@
                                     {% if preferences.SiteSetting.enable_climate_data %}
                                         <a class="dropdown-item" href="/climate/upload/">Climate Data</a>
                                     {% endif %}
+                                    {% if preferences.SiteSetting.enable_groundwater_data %}
+                                        <a class="dropdown-item" href="/groundwater/upload/">Groundwater Data</a>
+                                    {% endif %}
                                 {% endif %}
                                 <div class="dropdown-divider"></div>
                                 <h6 class="dropdown-header">Taxon Management</h6>

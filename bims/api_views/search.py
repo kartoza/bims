@@ -641,6 +641,29 @@ class CollectionSearch(object):
     def climate_module(self):
         return self.get_request_data('module') == 'climate'
 
+    def abiotic_module_sites(self):
+        """Return the sites found by the selected abiotic module search
+        (water temperature, physico-chemistry, climate or groundwater),
+        or None when no abiotic module is selected."""
+        from bims.api_views.search_module import (
+            WaterTemperatureModule,
+            PhysicoChemistryModule,
+            ClimateModule,
+            GroundwaterModule,
+        )
+        module_searches = {
+            'water_temperature': WaterTemperatureModule,
+            'physico_chemistry': PhysicoChemistryModule,
+            'climate': ClimateModule,
+            'groundwater': GroundwaterModule,
+        }
+        module_search = module_searches.get(self.get_request_data('module'))
+        if not module_search or isinstance(self, module_search):
+            return None
+        search = module_search(self.parameters)
+        search.run_search()
+        return search.sites.values('id')
+
     def filter_taxa_records(self, query_dict):
         """
         Filter taxa records
@@ -1065,6 +1088,16 @@ class CollectionSearch(object):
 
             filtered_location_sites = filtered_location_sites.filter(
                 survey__chemical_collection_record__isnull=False
+            )
+
+        # With an abiotic module selected, the map only shows the sites
+        # with data of that module, so only use the records of those sites
+        module_sites = self.abiotic_module_sites()
+        if module_sites is not None:
+            if not isinstance(filtered_location_sites, QuerySet):
+                filtered_location_sites = LocationSite.objects.all()
+            filtered_location_sites = filtered_location_sites.filter(
+                id__in=module_sites
             )
 
         # A site filter that matches no site must give no records, not all

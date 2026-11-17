@@ -4,11 +4,14 @@ from groundwater.views import (
     GroundwaterSiteView,
     GroundwaterDownloadView,
     GroundwaterDashboardMultipleSitesView,
+    GroundwaterUploadView,
 )
 
 app_name = 'groundwater'
 
 urlpatterns = [
+    path('upload/', GroundwaterUploadView.as_view(),
+         name='groundwater-upload'),
     path(
         'dashboard-multi-sites/',
         GroundwaterDashboardMultipleSitesView.as_view(),

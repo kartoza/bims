@@ -13,7 +13,8 @@ def search_task(parameters, search_process_id, background=True):
     from bims.api_views.search_module import (
         PhysicoChemistryModule,
         WaterTemperatureModule,
-        ClimateModule
+        ClimateModule,
+        GroundwaterModule
     )
     from bims.models.search_process import (
         SearchProcess,
@@ -37,6 +38,8 @@ def search_task(parameters, search_process_id, background=True):
         search = PhysicoChemistryModule(parameters)
     elif parameters['module'] == 'climate':
         search = ClimateModule(parameters)
+    elif parameters['module'] == 'groundwater':
+        search = GroundwaterModule(parameters)
     else:
         search = CollectionSearch(parameters)
 

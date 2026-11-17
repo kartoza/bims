@@ -312,6 +312,11 @@ class SiteSetting(Preferences):
         help_text='Enable or disable Climate data'
     )
 
+    enable_groundwater_data = models.BooleanField(
+        default=False,
+        help_text='Enable or disable Groundwater data'
+    )
+
     enable_harvest_worms = models.BooleanField(
         default=False,
         help_text='Enable or disable Harvest from WoRMS'

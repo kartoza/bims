@@ -15,11 +15,12 @@ from rest_framework import serializers
 from bims.models.location_site import LocationSite
 from rest_framework.response import Response
 
-from bims.api_views.search import CollectionSearch, MAX_PAGINATED_SITES
+from bims.api_views.search import CollectionSearch
 from bims.models.water_temperature import WaterTemperature
 from bims.utils.api_view import BimsApiView
 from bims.models.chemical_record import ChemicalRecord
 from climate.models import Climate
+from groundwater.models import GroundwaterReading
 
 
 class SiteWaterTemperatureSerializer(serializers.ModelSerializer):
@@ -270,4 +271,38 @@ class ClimateModule(SearchModule):
             context={
                 'climate': self.module
             }
+        ).data
+
+
+class SiteGroundwaterSerializer(serializers.ModelSerializer):
+    site_id = serializers.SerializerMethodField()
+    name = serializers.SerializerMethodField()
+    total_groundwater_records = serializers.IntegerField()
+
+    def get_site_id(self, obj: LocationSite) -> int:
+        return obj.id
+
+    def get_name(self, obj: LocationSite) -> str:
+        return obj.site_code if obj.site_code else obj.name
+
+    class Meta:
+        model = LocationSite
+        fields = [
+            'site_id', 'name', 'total_groundwater_records'
+        ]
+
+
+class GroundwaterModule(SearchModule):
+    module = GroundwaterReading.objects.all()
+    date_field = 'timestamp'
+
+    def annotate(self):
+        self.sites = self.sites.annotate(
+            total_groundwater_records=Count('groundwater_data')
+        )
+
+    def serialize_sites(self):
+        return SiteGroundwaterSerializer(
+            self.sites,
+            many=True
         ).data

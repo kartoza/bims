@@ -167,6 +167,9 @@
                             {% if preferences.SiteSetting.enable_climate_data %}
                                 <li class="dropdown-menu-item"><a href="/climate/upload/" style="font-size: 10pt">Climate Data</a></li>
                             {% endif %}
+                            {% if preferences.SiteSetting.enable_groundwater_data %}
+                                <li class="dropdown-menu-item"><a href="/groundwater/upload/" style="font-size: 10pt">Groundwater Data</a></li>
+                            {% endif %}
                             <div class="dropdown-divider"></div>
                             <li class="dropdown-menu-item"><a href="/admin/">Admin Page</a></li>
                             <div class="dropdown-divider"></div>
