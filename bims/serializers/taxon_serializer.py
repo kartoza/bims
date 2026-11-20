@@ -65,6 +65,7 @@ class TaxonSerializer(serializers.ModelSerializer):
     can_edit = serializers.SerializerMethodField()
     taxonomic_status = serializers.SerializerMethodField()
     addendum = serializers.SerializerMethodField()
+    addendum_abbreviation = serializers.SerializerMethodField()
     fada_id = serializers.SerializerMethodField()
     children_count = serializers.SerializerMethodField()
     other_group_count = serializers.SerializerMethodField()
@@ -354,10 +355,27 @@ class TaxonSerializer(serializers.ModelSerializer):
                 pass
         return iucn_status
 
-    def get_addendum(self, obj):
+    def _addendum_text(self, obj, abbreviate):
+        """Addendum display text, as 'old → new' when a pending proposal
+        changes it (the raw codes can't be mapped once combined)."""
         from bims.utils.taxonomy import get_addendum_display
-        code = self.get_proposed_or_current(obj, 'addendum')
-        return get_addendum_display(code, abbreviate=False)
+        current = get_addendum_display(obj.addendum, abbreviate=abbreviate)
+        if self.context.get('validated', False):
+            return current
+        proposal = self.get_pending_proposal(obj)
+        if not proposal:
+            return current
+        proposed = get_addendum_display(
+            proposal.addendum, abbreviate=abbreviate)
+        if proposed != current:
+            return f"{current or '-'} → {proposed}"
+        return current
+
+    def get_addendum(self, obj):
+        return self._addendum_text(obj, abbreviate=False)
+
+    def get_addendum_abbreviation(self, obj):
+        return self._addendum_text(obj, abbreviate=True)
 
     def get_scientific_name(self, obj):
         from bims.utils.taxonomy import get_addendum_display

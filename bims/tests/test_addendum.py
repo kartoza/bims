@@ -224,6 +224,40 @@ class TestAddendumSerializers(FastTenantTestCase):
         data = TaxonSerializer(self.plain_taxon, context={'validated': True}).data
         self.assertEqual(data['addendum'], '')
         self.assertEqual(data['scientific_name'], 'Homo sapiens L.')
+        self.assertEqual(data['addendum_abbreviation'], '')
+
+    def test_taxon_serializer_addendum_abbreviation(self):
+        data = TaxonSerializer(self.taxon, context={'validated': True}).data
+        self.assertEqual(data['addendum_abbreviation'], 's.l.')
+
+    def test_taxon_serializer_addendum_abbreviation_for_synonym(self):
+        synonym = TaxonomyF.create(
+            scientific_name='Aquanothrus alpinus Tester, 1980',
+            canonical_name='Aquanothrus alpinus',
+            taxonomic_status='SYNONYM',
+            accepted_taxonomy=self.taxon,
+            addendum=TaxonAddendum.PARTIM.name,
+        )
+        data = TaxonSerializer(synonym, context={'validated': True}).data
+        self.assertEqual(data['addendum'], 'partim')
+        self.assertEqual(data['addendum_abbreviation'], 'partim')
+
+    def test_taxon_serializer_addendum_pending_proposal_diff(self):
+        group = TaxonGroupF.create(taxonomies=(self.taxon,))
+        TaxonomyUpdateProposal.objects.create(
+            original_taxonomy=self.taxon,
+            taxon_group=group,
+            taxon_group_under_review=group,
+            status='pending',
+            scientific_name=self.taxon.scientific_name,
+            canonical_name=self.taxon.canonical_name,
+            rank=self.taxon.rank,
+            addendum=TaxonAddendum.PARTIM.name,
+        )
+        data = TaxonSerializer(
+            [self.taxon], many=True, context={'validated': False}).data[0]
+        self.assertEqual(data['addendum_abbreviation'], 's.l. → partim')
+        self.assertEqual(data['addendum'], 'sensu lato → partim')
 
 
 class TestAddendumProposalLifecycle(FastTenantTestCase):
