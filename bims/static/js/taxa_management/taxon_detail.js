@@ -1,10 +1,17 @@
 export const taxonDetail = (() => {
 
     function parseAcceptedTaxonomyName(raw) {
-      const out = { canonical: '', genus: '', species: '', subspecies: '', author: '' };
+      const out = { canonical: '', genus: '', species: '', subspecies: '', author: '', addendum: '' };
       if (!raw || !String(raw).trim()) return out;
 
       let s = String(raw).trim().replace(/\s*-\s*[A-Z][A-Z\s.]+$/u, '').trim();
+      // Take out the addendum (s.l. / sensu lato / partim) shown after the name
+      const addendumPattern = /\s+(s\.\s?l\.|sensu\s+lato|partim)(?=\s|$)/iu;
+      const addendumMatch = s.match(addendumPattern);
+      if (addendumMatch) {
+        out.addendum = /^partim$/iu.test(addendumMatch[1]) ? 'partim' : 'sensu lato';
+        s = s.replace(addendumPattern, '').trim();
+      }
 
       const paren = s.match(/\(([^()]*)\)\s*$/u);
       if (paren) {
@@ -44,6 +51,7 @@ export const taxonDetail = (() => {
         case 'SPECIES':     return parts.species;
         case 'SUBSPECIES':  return parts.subspecies;
         case 'AUTHOR':      return parts.author;
+        case 'ADDENDUM':    return parts.addendum;
         case 'CANONICAL':   return parts.canonical;
         default:            return parts.canonical;
       }
@@ -114,6 +122,11 @@ export const taxonDetail = (() => {
         const _taxonworksBaseUrl = ((options.taxonworksBaseUrl || '')).replace(/\/+$/, '');
         const hierarchySource = getHierarchySource(data);
         const notice = acceptedHierarchyNotice(data, hierarchySource);
+        // This section describes the valid/accepted name, so a synonym shows
+        // its accepted taxon's addendum rather than its own.
+        const acceptedAddendum = data.accepted_taxonomy_name
+            ? getCleanAcceptedName(data, 'ADDENDUM')
+            : data.addendum;
 
         return `
             <div class="container container-fluid" style="padding-left:40px;">
@@ -204,10 +217,10 @@ export const taxonDetail = (() => {
                                         : hierarchySource.subspecies
                                 }</div>
                             </div>
-                            ${data.addendum ? `
+                            ${acceptedAddendum ? `
                             <div class="dt-item col-12 row">
                                 <div class="col-6"><strong>Addendum</strong></div>
-                                <div class="col-6">${data.addendum}</div>
+                                <div class="col-6">${acceptedAddendum}</div>
                             </div>
                             ` : ''}
                             <div class="dt-item col-12 row">

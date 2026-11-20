@@ -259,6 +259,68 @@ class TestAddendumSerializers(FastTenantTestCase):
         self.assertEqual(data['addendum_abbreviation'], 's.l. → partim')
         self.assertEqual(data['addendum'], 'sensu lato → partim')
 
+    def test_taxon_serializer_accepted_taxonomy_name_has_addendum(self):
+        synonym = TaxonomyF.create(
+            scientific_name='Aquanothrus alpinus Tester, 1980',
+            canonical_name='Aquanothrus alpinus',
+            taxonomic_status='SYNONYM',
+            accepted_taxonomy=self.taxon,
+        )
+        data = TaxonSerializer(synonym, context={'validated': True}).data
+        self.assertEqual(
+            data['accepted_taxonomy_name'],
+            f'Aquanothrus montanus s.l. Engelbrecht, 1975 - {self.taxon.rank}'
+        )
+
+    def test_taxon_serializer_accepted_taxonomy_name_without_addendum(self):
+        synonym = TaxonomyF.create(
+            scientific_name='Homo erectus Dubois',
+            canonical_name='Homo erectus',
+            taxonomic_status='SYNONYM',
+            accepted_taxonomy=self.plain_taxon,
+        )
+        data = TaxonSerializer(synonym, context={'validated': True}).data
+        self.assertEqual(
+            data['accepted_taxonomy_name'],
+            f'Homo sapiens L. - {self.plain_taxon.rank}'
+        )
+
+    def test_taxon_serializer_no_accepted_taxonomy(self):
+        data = TaxonSerializer(self.taxon, context={'validated': True}).data
+        self.assertEqual(data['accepted_taxonomy_name'], '')
+
+    def test_taxon_serializer_accepted_taxonomy_name_proposal_diff(self):
+        partim_taxon = TaxonomyF.create(
+            scientific_name='Aquanothrus major Tester, 1981',
+            canonical_name='Aquanothrus major',
+            addendum=TaxonAddendum.PARTIM.name,
+        )
+        synonym = TaxonomyF.create(
+            scientific_name='Aquanothrus alpinus Tester, 1980',
+            canonical_name='Aquanothrus alpinus',
+            taxonomic_status='SYNONYM',
+            accepted_taxonomy=self.taxon,
+        )
+        group = TaxonGroupF.create(taxonomies=(synonym,))
+        TaxonomyUpdateProposal.objects.create(
+            original_taxonomy=synonym,
+            taxon_group=group,
+            taxon_group_under_review=group,
+            status='pending',
+            scientific_name=synonym.scientific_name,
+            canonical_name=synonym.canonical_name,
+            rank=synonym.rank,
+            taxonomic_status='SYNONYM',
+            accepted_taxonomy=partim_taxon,
+        )
+        data = TaxonSerializer(
+            [synonym], many=True, context={'validated': False}).data[0]
+        self.assertEqual(
+            data['accepted_taxonomy_name'],
+            f'Aquanothrus montanus s.l. Engelbrecht, 1975 - {self.taxon.rank}'
+            f' → Aquanothrus major partim Tester, 1981 - {partim_taxon.rank}'
+        )
+
 
 class TestAddendumProposalLifecycle(FastTenantTestCase):
 

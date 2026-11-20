@@ -485,8 +485,35 @@ class TaxonSerializer(serializers.ModelSerializer):
             ).exists()
         return obj.validated
 
+    @staticmethod
+    def _accepted_taxonomy_display(taxon):
+        """'<name> [addendum] <author> - <rank>', e.g.
+        'Acentrella lata s.l. Tester, 2026 - SPECIES'."""
+        if not taxon:
+            return ''
+        from bims.utils.taxonomy import get_addendum_display
+        name = taxon.scientific_name or ''
+        addendum = get_addendum_display(taxon.addendum, abbreviate=True)
+        if addendum:
+            canonical = taxon.canonical_name
+            if canonical and canonical in name:
+                name = name.replace(canonical, f'{canonical} {addendum}', 1)
+            else:
+                name = f'{name} {addendum}'.strip()
+        return f'{name} - {taxon.rank}'
+
     def get_accepted_taxonomy_name(self, obj):
-        return self.get_proposed_or_current(obj, 'accepted_taxonomy')
+        current = self._accepted_taxonomy_display(obj.accepted_taxonomy)
+        if self.context.get('validated', False):
+            return current
+        proposal = self.get_pending_proposal(obj)
+        if not proposal:
+            return current
+        proposed = self._accepted_taxonomy_display(
+            proposal.accepted_taxonomy)
+        if current.strip() != proposed.strip():
+            return f"{current or '-'} → {proposed}"
+        return current
 
     def get_total_records(self, obj):
         return BiologicalCollectionRecord.objects.filter(
