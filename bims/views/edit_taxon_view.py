@@ -172,6 +172,25 @@ class EditTaxonView(LoginRequiredMixin, UserPassesTestMixin, UpdateView):
         status = (data.get('taxonomic_status') or taxon.taxonomic_status or '').upper()
         is_synonym = 'SYNONYM' in status
 
+        if not parent and not is_synonym:
+            # Accepted/doubtful taxa must keep their parent. An empty parent
+            # field (e.g. cleared by toggling the status through "Synonym")
+            # would otherwise detach the taxon from its genus on approval.
+            # form.instance already has the empty value applied, so read the
+            # stored parent (pending proposal first, then the taxon) from the DB.
+            pending = TaxonomyUpdateProposal.objects.filter(
+                original_taxonomy_id=taxon.pk,
+                status='pending',
+                taxon_group_id=taxon_group_id,
+            ).select_related('parent').first()
+            parent = pending.parent if pending else None
+            if not parent:
+                stored_parent_id = Taxonomy.objects.filter(
+                    pk=taxon.pk).values_list('parent_id', flat=True).first()
+                if stored_parent_id:
+                    parent = Taxonomy.objects.filter(pk=stored_parent_id).first()
+            data['parent'] = parent
+
         if parent:
             if 'subspecies' in current_rank.lower():
                 if parent.rank and parent.rank.lower() == 'species':

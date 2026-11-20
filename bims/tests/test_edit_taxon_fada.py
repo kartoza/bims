@@ -455,6 +455,36 @@ class EditTaxonFadaTest(FastTenantTestCase):
 
         self.client.logout()
 
+    def test_doubtful_status_without_parent_keeps_parent(self):
+        """An empty parent must not detach a doubtful taxon from its genus."""
+        self.client.login(username='superuser', password='password')
+        url = reverse('edit_taxon', kwargs={
+            'id': self.taxonomy.id,
+            'taxon_group_id': self.taxon_group.id
+        })
+        response = self.client.post(url, {
+            'taxon_name': 'epithet',
+            'rank': 'SPECIES',
+            'author': 'Test Author',
+            'taxonomic_status': 'DOUBTFUL',
+            'accepted_taxonomy': '',
+            'parent': '',
+        })
+        self.assertEqual(response.status_code, 302)
+
+        proposal = TaxonomyUpdateProposal.objects.get(
+            original_taxonomy=self.taxonomy,
+            taxon_group=self.taxon_group,
+            status='pending'
+        )
+        self.assertEqual(proposal.taxonomic_status, 'DOUBTFUL')
+        self.assertEqual(proposal.parent, self.parent)
+        self.assertEqual(proposal.canonical_name, 'TestGenus epithet')
+
+        proposal.approve(self.superuser, suppress_emails=True)
+        self.taxonomy.refresh_from_db()
+        self.assertEqual(self.taxonomy.parent, self.parent)
+
 
 class EditTaxonReadOnlyGroupTest(FastTenantTestCase):
     """
