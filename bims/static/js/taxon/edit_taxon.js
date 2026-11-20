@@ -192,6 +192,11 @@ document.addEventListener('DOMContentLoaded', function() {
             parentTaxonSelect.disabled = shouldHideParent;
             if (shouldHideParent) {
                 $('#parent-taxon').val(null).trigger('change');
+            } else if (parent && parentId && !$('#parent-taxon').val()) {
+                // Switching back from a synonym status (e.g. Synonym -> Doubtful)
+                // must restore the original parent, otherwise the taxon is saved
+                // without a parent and loses its genus.
+                restoreOriginalParent();
             }
         }
         refreshHierarchyTree();
@@ -204,6 +209,14 @@ document.addEventListener('DOMContentLoaded', function() {
         acceptedTaxonomyId = this.value || null;
         refreshHierarchyTree();
     });
+
+    function restoreOriginalParent() {
+        let parentTaxon = $('#parent-taxon');
+        if (!parentTaxon.find(`option[value="${parentId}"]`).length) {
+            parentTaxon.append(new Option(parent, parentId, false, false));
+        }
+        parentTaxon.val(String(parentId)).trigger('change');
+    }
 
     if (parent && !isSynonymStatus(taxonomicStatus.value)) {
         let option = new Option(parent, parentId, true, true);
