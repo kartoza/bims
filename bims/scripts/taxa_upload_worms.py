@@ -11,9 +11,11 @@ from bims.scripts.data_upload import DataCSVUpload
 from bims.scripts.species_keys import *  # noqa
 from bims.models import (
     Taxonomy,
+    TaxonomyUpdateProposal,
 )
 from .taxa_upload import TaxaProcessor
 from bims.utils.fetch_gbif import harvest_synonyms_for_accepted_taxonomy
+from bims.api_views.taxon_update import create_taxon_proposal
 
 logger = logging.getLogger("bims")
 
@@ -558,6 +560,10 @@ class WormsTaxaProcessor(TaxaProcessor):
             and taxonomy.taxonomic_status != "UNACCEPTED"
         )
         self.add_taxon_to_taxon_group(taxonomy, taxon_group, validated=auto_validate)
+        # Unvalidated taxa need a pending proposal so experts can edit and
+        # approve/reject them from taxa management.
+        if not auto_validate:
+            self._ensure_pending_proposal(taxonomy, taxon_group)
 
         if harvest_synonyms and not is_synonym:
             try:
@@ -570,6 +576,8 @@ class WormsTaxaProcessor(TaxaProcessor):
                     self.add_taxon_to_taxon_group(
                         syn, taxon_group, validated=auto_validate
                     )
+                    if not auto_validate:
+                        self._ensure_pending_proposal(syn, taxon_group)
             except Exception as syn_exc:
                 logger.exception(
                     f"Error harvesting synonyms for {taxonomy.gbif_key}: {syn_exc}"
@@ -578,6 +586,17 @@ class WormsTaxaProcessor(TaxaProcessor):
         self.finish_processing_row(row, taxonomy)
 
         return taxonomy
+
+    @staticmethod
+    def _ensure_pending_proposal(taxonomy, taxon_group):
+        """Create a pending proposal unless one exists (re-harvesting must
+        not overwrite an expert's in-progress edit)."""
+        if not TaxonomyUpdateProposal.objects.filter(
+            original_taxonomy=taxonomy,
+            taxon_group=taxon_group,
+            status='pending',
+        ).exists():
+            create_taxon_proposal(taxonomy, taxon_group)
 
 
 class WormsTaxaCSVUpload(DataCSVUpload, WormsTaxaProcessor):

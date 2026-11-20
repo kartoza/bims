@@ -7,7 +7,7 @@ from django_tenants.test.cases import FastTenantTestCase
 from django_tenants.test.client import TenantClient
 from mock import mock
 
-from bims.models import TaxonGroupTaxonomy
+from bims.models import TaxonGroupTaxonomy, TaxonomyUpdateProposal
 from bims.tests.model_factories import (
     UploadSessionF,
     TaxonGroupF,
@@ -161,6 +161,14 @@ class TestWormsTaxaUpload(FastTenantTestCase):
                 taxonomy__canonical_name='[non-Uristidae] albinus',
                 taxongroup=self.taxon_group,
                 is_validated=False
+            ).exists()
+        )
+        # Unvalidated taxa get a pending proposal so experts can edit them
+        self.assertTrue(
+            TaxonomyUpdateProposal.objects.filter(
+                original_taxonomy__canonical_name='[non-Uristidae] albinus',
+                taxon_group=self.taxon_group,
+                status='pending'
             ).exists()
         )
 
@@ -760,6 +768,26 @@ class TestWormsTaxaUpload(FastTenantTestCase):
         link = self.taxon_group.taxonomies.through.objects.get(
             taxongroup=self.taxon_group, taxonomy=t)
         self.assertFalse(link.is_validated)
+        self.assertTrue(TaxonomyUpdateProposal.objects.filter(
+            original_taxonomy=t, taxon_group=self.taxon_group,
+            status='pending').exists())
+
+    @mock.patch('bims.scripts.taxa_upload_worms.preferences')
+    def test_reharvest_keeps_pending_proposal_edits(self, mock_preferences):
+        mock_preferences.SiteSetting.auto_validate_taxa_on_upload = False
+        row = self._no_accepted_row(9010, "Caridina edita", "nomen nudum")
+        t = self._Proc().process_worms_data(row, self.taxon_group)
+        proposal = TaxonomyUpdateProposal.objects.get(
+            original_taxonomy=t, taxon_group=self.taxon_group, status='pending')
+        proposal.author = 'Expert edit'
+        proposal.save()
+
+        self._Proc().process_worms_data(row, self.taxon_group)
+
+        proposals = TaxonomyUpdateProposal.objects.filter(
+            original_taxonomy=t, taxon_group=self.taxon_group, status='pending')
+        self.assertEqual(proposals.count(), 1)
+        self.assertEqual(proposals.first().author, 'Expert edit')
 
     @mock.patch('bims.scripts.taxa_upload_worms.preferences')
     def test_reharvest_clears_stale_self_link(self, mock_preferences):
