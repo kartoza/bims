@@ -589,6 +589,11 @@ export const taxaManagement = (() => {
               data: "canonical_name",
               render: function (data, type, row) {
                 const prettyName = renderTextDiff(row.canonical_name || row.scientific_name);
+                // Show the addendum (s.l. / partim) next to the name so it is
+                // visible for synonyms too, whose detail shows the accepted taxon.
+                const addendumTag = row.addendum_abbreviation
+                  ? ` <span class="taxon-addendum font-italic" title="${escapeHtml(row.addendum || '')}">${renderTextDiff(row.addendum_abbreviation)}</span>`
+                  : '';
 
                 const allGroups = taxaSidebar.allTaxaGroups(taxaGroups);
                 const currentGroup = allGroups.find(g => String(g.id) === String(currentSelectedTaxonGroup));
@@ -610,7 +615,7 @@ export const taxaManagement = (() => {
                   ? ' <span class="badge badge-secondary">Unvalidated</span>'
                   : '';
 
-                return `${prettyName}<br/>${gbifBadge}${iucnBadge}${wormsBadge}${taxonworksBadge}${unvalidatedBadge}<input type="hidden" class="proposal-id" value="${row.proposal_id}" />`;
+                return `${prettyName}${addendumTag}<br/>${gbifBadge}${iucnBadge}${wormsBadge}${taxonworksBadge}${unvalidatedBadge}<input type="hidden" class="proposal-id" value="${row.proposal_id}" />`;
               },
               className: "min-width-150"
             },
