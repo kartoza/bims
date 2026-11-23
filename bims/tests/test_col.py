@@ -32,7 +32,7 @@ class ResolveColIdTest(TestCase):
 
     # --- happy path: gbif_key ---
 
-    @patch('bims.utils.col.requests.get')
+    @patch('bims.utils.col.gbif_get')
     def test_returns_col_id_from_usage_key(self, mock_get):
         """usage.key from the v2 match response is returned as the COL id."""
         mock_get.return_value = _make_response(json_data=_match_payload('Q2M4'))
@@ -40,14 +40,14 @@ class ResolveColIdTest(TestCase):
         self.assertEqual(col_id, 'Q2M4')
         self.assertIsNotNone(payload)
 
-    @patch('bims.utils.col.requests.get')
+    @patch('bims.utils.col.gbif_get')
     def test_col_id_is_always_str(self, mock_get):
         """col_id is always returned as a string."""
         mock_get.return_value = _make_response(json_data=_match_payload('CRLT8'))
         col_id, _ = resolve_col_id(12345)
         self.assertIsInstance(col_id, str)
 
-    @patch('bims.utils.col.requests.get')
+    @patch('bims.utils.col.gbif_get')
     def test_correct_params_for_gbif_key(self, mock_get):
         """Request uses the COL checklist key and gbif: prefix on the taxon key."""
         mock_get.return_value = _make_response(json_data=_match_payload('Q2M4'))
@@ -58,7 +58,7 @@ class ResolveColIdTest(TestCase):
         self.assertEqual(params['scientificNameID'], 'gbif:1427067')
         self.assertNotIn('scientificName', params)
 
-    @patch('bims.utils.col.requests.get')
+    @patch('bims.utils.col.gbif_get')
     def test_accepts_string_gbif_key(self, mock_get):
         """A string gbif_key is accepted; the gbif: prefix is still correct."""
         mock_get.return_value = _make_response(json_data=_match_payload('Q2M4'))
@@ -69,7 +69,7 @@ class ResolveColIdTest(TestCase):
 
     # --- happy path: canonical_name fallback ---
 
-    @patch('bims.utils.col.requests.get')
+    @patch('bims.utils.col.gbif_get')
     def test_resolves_by_canonical_name_when_no_gbif_key(self, mock_get):
         """When gbif_key is absent, scientificName param is set to canonical_name."""
         mock_get.return_value = _make_response(json_data=_match_payload('CRLT8'))
@@ -82,7 +82,7 @@ class ResolveColIdTest(TestCase):
 
     # --- canonical name validation ---
 
-    @patch('bims.utils.col.requests.get')
+    @patch('bims.utils.col.gbif_get')
     def test_canonical_name_match_returns_gbif_key_result(self, mock_get):
         """When canonical_name matches the API response, gbif_key col_id is returned."""
         mock_get.return_value = _make_response(
@@ -92,7 +92,7 @@ class ResolveColIdTest(TestCase):
         self.assertEqual(col_id, 'Q2M4')
         mock_get.assert_called_once()
 
-    @patch('bims.utils.col.requests.get')
+    @patch('bims.utils.col.gbif_get')
     def test_canonical_name_match_is_case_insensitive(self, mock_get):
         """Canonical name comparison ignores case."""
         mock_get.return_value = _make_response(
@@ -101,7 +101,7 @@ class ResolveColIdTest(TestCase):
         col_id, _ = resolve_col_id(1427067, canonical_name='Felidae')
         self.assertEqual(col_id, 'Q2M4')
 
-    @patch('bims.utils.col.requests.get')
+    @patch('bims.utils.col.gbif_get')
     def test_canonical_name_mismatch_falls_back_to_canonical_name_lookup(self, mock_get):
         """When canonical_name doesn't match the API response, falls back to scientificName lookup."""
         gbif_response = _make_response(
@@ -120,7 +120,7 @@ class ResolveColIdTest(TestCase):
         self.assertIn('scientificNameID', first_params)
         self.assertEqual(second_params['scientificName'], 'Felidae')
 
-    @patch('bims.utils.col.requests.get')
+    @patch('bims.utils.col.gbif_get')
     def test_canonical_name_mismatch_no_fallback_returns_none(self, mock_get):
         """Canonical mismatch with no canonical_name to fall back on returns None."""
         mock_get.return_value = _make_response(
@@ -131,7 +131,7 @@ class ResolveColIdTest(TestCase):
         self.assertEqual(col_id, 'Q2M4')
         mock_get.assert_called_once()
 
-    @patch('bims.utils.col.requests.get')
+    @patch('bims.utils.col.gbif_get')
     def test_no_canonical_name_skips_validation(self, mock_get):
         """When canonical_name is empty, gbif_key result is returned without validation."""
         mock_get.return_value = _make_response(
@@ -143,7 +143,7 @@ class ResolveColIdTest(TestCase):
 
     # --- rank validation (canonical name fallback) ---
 
-    @patch('bims.utils.col.requests.get')
+    @patch('bims.utils.col.gbif_get')
     def test_rank_match_returns_name_lookup_result(self, mock_get):
         """When rank matches the API response, the name-lookup col_id is returned."""
         mock_get.return_value = _make_response(
@@ -152,7 +152,7 @@ class ResolveColIdTest(TestCase):
         col_id, _ = resolve_col_id(None, canonical_name='Felidae', rank='FAMILY')
         self.assertEqual(col_id, 'CRLT8')
 
-    @patch('bims.utils.col.requests.get')
+    @patch('bims.utils.col.gbif_get')
     def test_rank_match_is_case_insensitive(self, mock_get):
         """Rank comparison ignores case."""
         mock_get.return_value = _make_response(
@@ -161,7 +161,7 @@ class ResolveColIdTest(TestCase):
         col_id, _ = resolve_col_id(None, canonical_name='Felidae', rank='FAMILY')
         self.assertEqual(col_id, 'CRLT8')
 
-    @patch('bims.utils.col.requests.get')
+    @patch('bims.utils.col.gbif_get')
     def test_rank_mismatch_discards_name_lookup_result(self, mock_get):
         """When rank doesn't match the API response, the name-lookup match is discarded."""
         mock_get.return_value = _make_response(
@@ -170,7 +170,7 @@ class ResolveColIdTest(TestCase):
         col_id, _ = resolve_col_id(None, canonical_name='Felidae', rank='SPECIES')
         self.assertIsNone(col_id)
 
-    @patch('bims.utils.col.requests.get')
+    @patch('bims.utils.col.gbif_get')
     def test_no_rank_skips_rank_validation(self, mock_get):
         """When rank is not provided, the name-lookup result is returned without validation."""
         mock_get.return_value = _make_response(
@@ -179,7 +179,7 @@ class ResolveColIdTest(TestCase):
         col_id, _ = resolve_col_id(None, canonical_name='Felidae')
         self.assertEqual(col_id, 'CRLT8')
 
-    @patch('bims.utils.col.requests.get')
+    @patch('bims.utils.col.gbif_get')
     def test_rank_mismatch_after_gbif_key_fallback(self, mock_get):
         """Rank validation also applies to the name lookup reached via gbif_key fallback."""
         gbif_response = _make_response(
@@ -196,7 +196,7 @@ class ResolveColIdTest(TestCase):
 
     # --- no match ---
 
-    @patch('bims.utils.col.requests.get')
+    @patch('bims.utils.col.gbif_get')
     def test_returns_none_for_match_type_none(self, mock_get):
         """matchType NONE means no COL record found; returns (None, payload)."""
         mock_get.return_value = _make_response(
@@ -206,7 +206,7 @@ class ResolveColIdTest(TestCase):
         self.assertIsNone(col_id)
         self.assertIsNotNone(payload)
 
-    @patch('bims.utils.col.requests.get')
+    @patch('bims.utils.col.gbif_get')
     def test_returns_none_when_usage_key_missing(self, mock_get):
         """A 200 response without usage.key returns (None, payload)."""
         mock_get.return_value = _make_response(
@@ -218,7 +218,7 @@ class ResolveColIdTest(TestCase):
 
     # --- error responses ---
 
-    @patch('bims.utils.col.requests.get')
+    @patch('bims.utils.col.gbif_get')
     def test_returns_none_on_server_error(self, mock_get):
         """5xx responses return (None, None)."""
         mock_get.return_value = _make_response(status_code=500)
@@ -226,7 +226,7 @@ class ResolveColIdTest(TestCase):
         self.assertIsNone(col_id)
         self.assertIsNone(payload)
 
-    @patch('bims.utils.col.requests.get')
+    @patch('bims.utils.col.gbif_get')
     def test_returns_none_on_invalid_json(self, mock_get):
         """Malformed JSON response returns (None, None) without raising."""
         import simplejson
@@ -237,7 +237,7 @@ class ResolveColIdTest(TestCase):
         self.assertIsNone(col_id)
         self.assertIsNone(payload)
 
-    @patch('bims.utils.col.requests.get')
+    @patch('bims.utils.col.gbif_get')
     def test_returns_none_on_connection_error(self, mock_get):
         """Network failures return (None, None) without raising."""
         import requests as req
@@ -248,7 +248,7 @@ class ResolveColIdTest(TestCase):
 
     # --- edge cases ---
 
-    @patch('bims.utils.col.requests.get')
+    @patch('bims.utils.col.gbif_get')
     def test_returns_none_when_both_inputs_absent(self, mock_get):
         """No gbif_key and no canonical_name short-circuits without any HTTP call."""
         col_id, payload = resolve_col_id(None)
@@ -256,7 +256,7 @@ class ResolveColIdTest(TestCase):
         self.assertIsNone(payload)
         mock_get.assert_not_called()
 
-    @patch('bims.utils.col.requests.get')
+    @patch('bims.utils.col.gbif_get')
     def test_returns_none_for_zero_gbif_key_and_no_name(self, mock_get):
         """0 gbif_key with no canonical_name short-circuits without any HTTP call."""
         col_id, payload = resolve_col_id(0)
