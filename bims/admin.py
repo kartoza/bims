@@ -2679,9 +2679,11 @@ class OgcLayerAdmin(admin.ModelAdmin):
         'failure_count',
         'created',
         'last_accessed',
+        'usage_link',
     )
     list_filter = ('is_active', 'include_sensitive', 'include_private')
     search_fields = ('name', 'owner__username', 'token_hint')
+    change_list_template = 'admin/bims/ogclayer/change_list.html'
     readonly_fields = (
         'token_hint',
         'created',
@@ -2695,6 +2697,63 @@ class OgcLayerAdmin(admin.ModelAdmin):
         'disabled_reason',
     )
     actions = ['revoke', 'rotate_token', 'reactivate']
+
+    def get_urls(self):
+        urls = super().get_urls()
+        custom_urls = [
+            path(
+                'usage/',
+                self.admin_site.admin_view(self.usage_view),
+                name='bims_ogclayer_usage',
+            ),
+            path(
+                '<int:pk>/usage/',
+                self.admin_site.admin_view(self.layer_usage_view),
+                name='bims_ogclayer_layer_usage',
+            ),
+        ]
+        return custom_urls + urls
+
+    def usage_link(self, obj):
+        url = reverse('admin:bims_ogclayer_layer_usage', args=[obj.pk])
+        return mark_safe(f'<a href="{url}">Usage</a>')
+
+    usage_link.short_description = 'Usage'
+
+    def usage_view(self, request):
+        """Requests per day, slow layers, auto-disabled layers and
+        owners near the layer limit."""
+        from bims.utils.ogc_usage import usage_period, usage_report
+        if not self.has_view_permission(request):
+            raise PermissionDenied
+        context = dict(
+            self.admin_site.each_context(request),
+            opts=self.model._meta,
+            title='Live layer usage',
+            changelist_url=reverse('admin:bims_ogclayer_changelist'),
+            **usage_report(usage_period(request.GET.get('days'))),
+        )
+        return TemplateResponse(
+            request, 'admin/bims/ogclayer/usage.html', context)
+
+    def layer_usage_view(self, request, pk):
+        """Daily usage of one layer."""
+        from django.shortcuts import get_object_or_404
+        from bims.utils.ogc_usage import layer_usage_report, usage_period
+        if not self.has_view_permission(request):
+            raise PermissionDenied
+        layer = get_object_or_404(OgcLayer, pk=pk)
+        context = dict(
+            self.admin_site.each_context(request),
+            opts=self.model._meta,
+            title='Usage of %s' % layer.name,
+            changelist_url=reverse('admin:bims_ogclayer_changelist'),
+            usage_url=reverse('admin:bims_ogclayer_usage'),
+            change_url=reverse('admin:bims_ogclayer_change', args=[pk]),
+            **layer_usage_report(layer, usage_period(request.GET.get('days'))),
+        )
+        return TemplateResponse(
+            request, 'admin/bims/ogclayer/layer_usage.html', context)
 
     def save_model(self, request, obj, form, change):
         # Switching a layer back on by hand clears why it was switched off

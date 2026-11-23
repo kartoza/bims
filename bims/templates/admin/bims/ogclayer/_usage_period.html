@@ -1,0 +1,6 @@
+<p class="ogc-period">
+    Period:
+    {% for period in periods %}
+        {% if period == days %}<strong>Last {{ period }} days</strong>{% else %}<a href="?days={{ period }}">Last {{ period }} days</a>{% endif %}
+    {% endfor %}
+</p>

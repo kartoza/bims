@@ -87,4 +87,4 @@ from bims.models.licence import Licence
 from bims.models.taxonomy_checklist import TaxonomyChecklist
 from bims.models.checklist_version import ChecklistVersion, ChecklistVersionContributor
 from bims.models.taxon_url import TaxonURL
-from bims.models.ogc_layer import OgcLayer
+from bims.models.ogc_layer import OgcLayer, OgcLayerDailyUsage

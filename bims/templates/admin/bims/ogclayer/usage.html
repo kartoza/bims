@@ -1,0 +1,135 @@
+{% extends "admin/base_site.html" %}
+{% load humanize %}
+
+{% block title %}Live layer usage{% endblock %}
+
+{% block extrastyle %}{{ block.super }}{% include "admin/bims/ogclayer/_usage_style.html" %}{% endblock %}
+
+{% block breadcrumbs %}
+<ul>
+    <li><a href="{% url 'admin:index' %}">Home</a></li>
+    <li><a href="{% url 'admin:app_list' app_label=opts.app_label %}">{{ opts.app_config.verbose_name }}</a></li>
+    <li><a href="{{ changelist_url }}">{{ opts.verbose_name_plural|capfirst }}</a></li>
+    <li>Usage</li>
+</ul>
+{% endblock %}
+
+{% block content %}
+<div class="ogc-usage">
+    {% include "admin/bims/ogclayer/_usage_period.html" %}
+
+    <div class="ogc-tiles">
+        <div class="ogc-tile"><div class="ogc-value">{{ totals.requests|intcomma }}</div><div class="ogc-label">Requests</div></div>
+        <div class="ogc-tile"><div class="ogc-value">{{ totals.slow_requests|intcomma }}</div><div class="ogc-label">Slow requests (over {{ slow_request_seconds }} s)</div></div>
+        <div class="ogc-tile"><div class="ogc-value">{{ totals.timeouts|intcomma }}</div><div class="ogc-label">Evaluation timeouts</div></div>
+        <div class="ogc-tile"><div class="ogc-value">{{ active_layers|intcomma }}</div><div class="ogc-label">Active layers</div></div>
+        <div class="ogc-tile"><div class="ogc-value{% if auto_disabled %} ogc-warn{% endif %}">{{ auto_disabled|length }}</div><div class="ogc-label">Switched off automatically</div></div>
+    </div>
+
+    <h2>Requests per day</h2>
+    {% include "admin/bims/ogclayer/_usage_chart.html" %}
+
+    <h2>Requests per layer</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Layer</th><th>Owner</th><th>Status</th>
+                <th class="ogc-num">Requests</th><th></th>
+                <th class="ogc-num">Slow</th><th class="ogc-num">Timeouts</th>
+                <th class="ogc-num">Records</th><th class="ogc-num">Last evaluation</th>
+                <th>Last accessed</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for row in layers %}
+            <tr>
+                <td><a href="{% url 'admin:bims_ogclayer_layer_usage' row.layer.pk %}?days={{ days }}">{{ row.layer.name }}</a></td>
+                <td>{{ row.layer.owner.username }}</td>
+                <td>{% if row.layer.is_active %}{% if row.layer.is_expired %}Expired{% else %}Active{% endif %}{% elif row.layer.disabled_reason %}<span class="ogc-warn">Auto-disabled</span>{% else %}Revoked{% endif %}</td>
+                <td class="ogc-num">{{ row.requests|intcomma }}</td>
+                <td style="width: 120px"><span class="ogc-inline-bar" style="width: {{ row.bar }}%"></span></td>
+                <td class="ogc-num">{{ row.slow_requests|intcomma }}</td>
+                <td class="ogc-num{% if row.timeouts %} ogc-warn{% endif %}">{{ row.timeouts|intcomma }}</td>
+                <td class="ogc-num">{{ row.layer.record_count_cached|default_if_none:"–"|intcomma }}</td>
+                <td class="ogc-num">{% if row.layer.last_evaluation_ms is not None %}{{ row.layer.last_evaluation_ms|intcomma }} ms{% else %}–{% endif %}</td>
+                <td>{{ row.layer.last_accessed|default_if_none:"Never" }}</td>
+            </tr>
+        {% empty %}
+            <tr><td colspan="10" class="ogc-muted">No layers were used in this period.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+
+    <h2>Slow layers</h2>
+    <p class="ogc-muted">Layers with requests slower than {{ slow_request_seconds }} s or evaluations that timed out, worst first.</p>
+    <table>
+        <thead>
+            <tr>
+                <th>Layer</th><th>Owner</th>
+                <th class="ogc-num">Timeouts</th><th class="ogc-num">Slow requests</th>
+                <th class="ogc-num">Slowest request</th><th class="ogc-num">Last evaluation</th>
+                <th class="ogc-num">Failures in a row</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for row in slow_layers %}
+            <tr>
+                <td><a href="{% url 'admin:bims_ogclayer_layer_usage' row.layer.pk %}?days={{ days }}">{{ row.layer.name }}</a></td>
+                <td>{{ row.layer.owner.username }}</td>
+                <td class="ogc-num{% if row.timeouts %} ogc-warn{% endif %}">{{ row.timeouts|intcomma }}</td>
+                <td class="ogc-num">{{ row.slow_requests|intcomma }}</td>
+                <td class="ogc-num">{{ row.slowest_ms|intcomma }} ms</td>
+                <td class="ogc-num">{% if row.layer.last_evaluation_ms is not None %}{{ row.layer.last_evaluation_ms|intcomma }} ms{% else %}–{% endif %}</td>
+                <td class="ogc-num">{{ row.layer.failure_count }}</td>
+            </tr>
+        {% empty %}
+            <tr><td colspan="7" class="ogc-muted">No slow requests or timeouts in this period.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+
+    <h2>Switched off automatically</h2>
+    <p class="ogc-muted">Select these layers in the list and use <em>Reactivate</em> once the filter is fixed.</p>
+    <table>
+        <thead>
+            <tr><th>Layer</th><th>Owner</th><th>Reason</th><th>Last successful evaluation</th></tr>
+        </thead>
+        <tbody>
+        {% for layer in auto_disabled %}
+            <tr>
+                <td><a href="{% url 'admin:bims_ogclayer_change' layer.pk %}">{{ layer.name }}</a></td>
+                <td>{{ layer.owner.username }}</td>
+                <td>{{ layer.disabled_reason }}</td>
+                <td>{{ layer.last_evaluated|default_if_none:"Never" }}</td>
+            </tr>
+        {% empty %}
+            <tr><td colspan="4" class="ogc-muted">No layer has been switched off automatically.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+
+    <h2>Owners near the layer limit</h2>
+    {% if owner_limit %}
+        <p class="ogc-muted">Owners with {{ owner_threshold }} or more active layers. The limit is {{ owner_limit }} (OGC_MAX_LAYERS_PER_OWNER).</p>
+        <table>
+            <thead><tr><th>Owner</th><th>Email</th><th class="ogc-num">Active layers</th><th></th></tr></thead>
+            <tbody>
+            {% for owner in owners_near_limit %}
+                <tr>
+                    <td><a href="{{ changelist_url }}?owner__id__exact={{ owner.owner_id }}&is_active__exact=1">{{ owner.owner__username }}</a></td>
+                    <td>{{ owner.owner__email }}</td>
+                    <td class="ogc-num{% if owner.at_limit %} ogc-warn{% endif %}">{{ owner.active_layers }} / {{ owner_limit }}</td>
+                    <td>{% if owner.at_limit %}<span class="ogc-warn">At the limit</span>{% endif %}</td>
+                </tr>
+            {% empty %}
+                <tr><td colspan="4" class="ogc-muted">No owner is near the limit.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    {% else %}
+        <p class="ogc-muted">There is no limit on layers per owner (OGC_MAX_LAYERS_PER_OWNER is 0).</p>
+    {% endif %}
+
+    <p class="ogc-muted">Requests are written to the database every few minutes, so today's figures can be slightly behind.</p>
+</div>
+{% endblock %}

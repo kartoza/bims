@@ -1,0 +1,13 @@
+<div class="ogc-chart" role="img" aria-label="Requests per day">
+    {% for day in daily %}
+        <div class="ogc-col{% if day.timeouts %} ogc-has-timeouts{% endif %}"
+             title="{{ day.date|date:'D j M Y' }}: {{ day.requests }} request(s), {{ day.slow_requests }} slow, {{ day.timeouts }} timeout(s)">
+            <div class="ogc-bar" style="height: {{ day.bar }}%"></div>
+        </div>
+    {% endfor %}
+</div>
+<div class="ogc-axis">
+    <span>{{ start|date:'j M Y' }}</span>
+    <span>Requests per day &middot; red: a day with timeouts &middot; hover a bar for figures</span>
+    <span>{{ end|date:'j M Y' }}</span>
+</div>

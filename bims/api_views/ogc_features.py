@@ -23,7 +23,7 @@ from django.views import View
 from bims.models.biological_collection_record import (
     BiologicalCollectionRecord
 )
-from bims.models.ogc_layer import OgcLayer
+from bims.models.ogc_layer import OgcLayer, OgcLayerDailyUsage
 from bims.serializers.ogc_serializer import (
     feature_from_record,
     features_from_records,
@@ -242,6 +242,10 @@ class OgcFeaturesView(View):
             for name in ('limit', 'offset', 'bbox', 'f')
             if name in request.GET
         }
+        if self.layer:
+            OgcLayerDailyUsage.add(
+                self.layer.pk, slow_requests=1,
+                slowest_ms=int(duration * 1000))
         logger.warning(
             'Slow OGC request: layer=%s view=%s status=%s duration=%.2fs '
             'params=%s',
