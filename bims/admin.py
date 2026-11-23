@@ -2716,7 +2716,7 @@ class OgcLayerAdmin(admin.ModelAdmin):
 
     def usage_link(self, obj):
         url = reverse('admin:bims_ogclayer_layer_usage', args=[obj.pk])
-        return mark_safe(f'<a href="{url}">Usage</a>')
+        return format_html('<a href="{}">Usage</a>', url)
 
     usage_link.short_description = 'Usage'
 
