@@ -1,0 +1,58 @@
+{% extends "admin/base_site.html" %}
+{% load humanize %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block extrastyle %}{{ block.super }}{% include "admin/bims/ogclayer/_usage_style.html" %}{% endblock %}
+
+{% block breadcrumbs %}
+<ul>
+    <li><a href="{% url 'admin:index' %}">Home</a></li>
+    <li><a href="{% url 'admin:app_list' app_label=opts.app_label %}">{{ opts.app_config.verbose_name }}</a></li>
+    <li><a href="{{ changelist_url }}">{{ opts.verbose_name_plural|capfirst }}</a></li>
+    <li><a href="{{ usage_url }}?days={{ days }}">Usage</a></li>
+    <li>{{ layer.name }}</li>
+</ul>
+{% endblock %}
+
+{% block content %}
+<div class="ogc-usage">
+    <p>
+        Owner: <strong>{{ layer.owner.username }}</strong> &middot;
+        Status: {% if layer.is_active %}{% if layer.is_expired %}Expired{% else %}Active{% endif %}{% elif layer.disabled_reason %}<span class="ogc-warn">Auto-disabled</span>: {{ layer.disabled_reason }}{% else %}Revoked{% endif %} &middot;
+        Records: {{ layer.record_count_cached|default_if_none:"–"|intcomma }} &middot;
+        Last evaluation: {% if layer.last_evaluation_ms is not None %}{{ layer.last_evaluation_ms|intcomma }} ms{% else %}–{% endif %} &middot;
+        <a href="{{ change_url }}">Edit layer</a>
+    </p>
+
+    {% include "admin/bims/ogclayer/_usage_period.html" %}
+
+    <div class="ogc-tiles">
+        <div class="ogc-tile"><div class="ogc-value">{{ totals.requests|intcomma }}</div><div class="ogc-label">Requests</div></div>
+        <div class="ogc-tile"><div class="ogc-value">{{ totals.slow_requests|intcomma }}</div><div class="ogc-label">Slow requests (over {{ slow_request_seconds }} s)</div></div>
+        <div class="ogc-tile"><div class="ogc-value">{{ totals.slowest_ms|intcomma }} ms</div><div class="ogc-label">Slowest request</div></div>
+        <div class="ogc-tile"><div class="ogc-value">{{ totals.timeouts|intcomma }}</div><div class="ogc-label">Evaluation timeouts</div></div>
+        <div class="ogc-tile"><div class="ogc-value">{{ layer.request_count|intcomma }}</div><div class="ogc-label">Requests since created</div></div>
+    </div>
+
+    <h2>Requests per day</h2>
+    {% include "admin/bims/ogclayer/_usage_chart.html" %}
+
+    <table>
+        <thead>
+            <tr><th>Date</th><th class="ogc-num">Requests</th><th class="ogc-num">Slow</th><th class="ogc-num">Slowest</th><th class="ogc-num">Timeouts</th></tr>
+        </thead>
+        <tbody>
+        {% for day in daily_newest_first %}
+            <tr>
+                <td>{{ day.date|date:'D j M Y' }}</td>
+                <td class="ogc-num">{{ day.requests|intcomma }}</td>
+                <td class="ogc-num">{{ day.slow_requests|intcomma }}</td>
+                <td class="ogc-num">{% if day.slowest_ms %}{{ day.slowest_ms|intcomma }} ms{% else %}–{% endif %}</td>
+                <td class="ogc-num{% if day.timeouts %} ogc-warn{% endif %}">{{ day.timeouts|intcomma }}</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

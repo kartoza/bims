@@ -11,7 +11,7 @@ from datetime import timedelta
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
-from django.db import models
+from django.db import IntegrityError, models, transaction
 from django.utils import timezone
 
 logger = logging.getLogger(__name__)
@@ -187,6 +187,7 @@ class OgcLayer(models.Model):
             return False
         OgcLayer.objects.filter(pk=self.pk).update(
             failure_count=models.F('failure_count') + 1)
+        OgcLayerDailyUsage.add(self.pk, timeouts=1)
         self.failure_count = OgcLayer.objects.filter(
             pk=self.pk).values_list('failure_count', flat=True).first() or 0
         limit = settings.OGC_LAYER_MAX_FAILURES
@@ -229,6 +230,7 @@ class OgcLayer(models.Model):
         if self.pk and count > 0:
             OgcLayer.objects.filter(pk=self.pk).update(
                 request_count=models.F('request_count') + count)
+            OgcLayerDailyUsage.add(self.pk, requests=count)
 
     def clean(self):
         super().clean()
@@ -267,3 +269,89 @@ class OgcLayer(models.Model):
         if not self.token_hash:
             self._set_token(generate_ogc_token())
         super().save(*args, **kwargs)
+
+
+class OgcLayerDailyUsage(models.Model):
+    """Usage of one layer on one day, for the admin usage page.
+
+    Requests are added when the cached request count is written to the
+    database (every few minutes), so a day can be slightly behind.
+    """
+
+    layer = models.ForeignKey(
+        OgcLayer,
+        on_delete=models.CASCADE,
+        related_name='daily_usage'
+    )
+    date = models.DateField()
+    requests = models.PositiveBigIntegerField(default=0)
+    slow_requests = models.PositiveIntegerField(
+        default=0,
+        help_text='Requests slower than OGC_SLOW_REQUEST_SECONDS.'
+    )
+    slowest_ms = models.PositiveIntegerField(
+        default=0,
+        help_text='Duration of the slowest request of the day.'
+    )
+    timeouts = models.PositiveIntegerField(
+        default=0,
+        help_text='Evaluations of the layer that timed out.'
+    )
+
+    class Meta:
+        ordering = ('-date',)
+        constraints = [
+            models.UniqueConstraint(
+                fields=('layer', 'date'),
+                name='unique_ogc_layer_daily_usage'),
+        ]
+        verbose_name_plural = 'OGC layer daily usage'
+
+    def __str__(self):
+        return '%s %s' % (self.layer_id, self.date)
+
+    @classmethod
+    def _value(cls, name, value):
+        return models.Value(value, output_field=cls._meta.get_field(name))
+
+    @classmethod
+    def add(cls, layer_pk, requests=0, slow_requests=0, slowest_ms=0,
+            timeouts=0, day=None):
+        """Add to the usage of a layer for a day (today by default).
+        """
+        if not layer_pk:
+            return
+        day = day or timezone.localdate()
+        added = {
+            'requests': requests,
+            'slow_requests': slow_requests,
+            'timeouts': timeouts,
+        }
+        changes = {
+            name: models.F(name) + cls._value(name, value)
+            for name, value in added.items() if value
+        }
+        if slowest_ms:
+            changes['slowest_ms'] = models.Case(
+                models.When(slowest_ms__lt=slowest_ms,
+                            then=cls._value('slowest_ms', slowest_ms)),
+                default=models.F('slowest_ms'),
+                output_field=cls._meta.get_field('slowest_ms'))
+        if not changes:
+            return
+        try:
+            with transaction.atomic():
+                rows = cls.objects.filter(layer_id=layer_pk, date=day)
+                if rows.update(**changes):
+                    return
+                try:
+                    with transaction.atomic():
+                        cls.objects.create(
+                            layer_id=layer_pk, date=day,
+                            slowest_ms=slowest_ms, **added)
+                except IntegrityError:
+                    rows.update(**changes)
+        except Exception:
+            logger.warning(
+                'Could not store usage of OGC layer %s', layer_pk,
+                exc_info=True)
