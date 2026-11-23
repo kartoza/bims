@@ -4,6 +4,8 @@ import requests
 import simplejson
 from django.conf import settings
 
+from bims.utils.gbif_http import gbif_get
+
 logger = logging.getLogger(__name__)
 
 GBIF_API_V2 = getattr(settings, 'GBIF_API_V2_BASE_URL', 'https://api.gbif.org/v2')
@@ -17,8 +19,8 @@ _MATCH_URL = f'{GBIF_API_V2}/species/match'
 def _call_match_api(params, label=''):
     """Make one request to the GBIF v2 species/match endpoint. Returns (col_id, payload)."""
     try:
-        response = requests.get(_MATCH_URL, params=params, timeout=10)
-    except requests.exceptions.ConnectionError as exc:
+        response = gbif_get(_MATCH_URL, params=params)
+    except requests.exceptions.RequestException as exc:
         logger.warning('COL resolver: connection error for %s: %s', label, exc)
         return None, None
 

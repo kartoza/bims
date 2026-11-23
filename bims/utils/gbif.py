@@ -5,12 +5,12 @@ import urllib
 import simplejson
 from django.conf import settings
 from requests.exceptions import HTTPError
-from requests.adapters import HTTPAdapter, Retry
 from pygbif import species
 from bims.models.taxonomy import Taxonomy
 from bims.models.vernacular_name import VernacularName
 from bims.enums import TaxonomicRank, TaxonomicStatus
 from bims.utils.col import COL_CHECKLIST_KEY
+from bims.utils.gbif_http import gbif_get, gbif_session
 from bims.utils.logger import log
 
 
@@ -54,7 +54,7 @@ def get_species(gbif_id):
     """
     api_url = GBIF_API + '/species/' + str(gbif_id)
     try:
-        response = requests.get(api_url)
+        response = gbif_get(api_url)
         json_result = response.json()
         return json_result
     except (HTTPError, KeyError, simplejson.errors.JSONDecodeError) as e:
@@ -70,7 +70,7 @@ def get_species_by_col_id(col_id):
     """
     api_url = f'{GBIF_API_V2}/species/match?checklistKey={COL_CHECKLIST_KEY}&scientificNameID=col:{col_id}'
     try:
-        response = requests.get(api_url)
+        response = gbif_get(api_url)
         json_result = response.json()
         return json_result
     except (HTTPError, KeyError, simplejson.errors.JSONDecodeError) as e:
@@ -88,7 +88,7 @@ def get_vernacular_names(species_id):
         str(species_id)
     )
     try:
-        response = requests.get(api_url)
+        response = gbif_get(api_url)
         json_result = response.json()
         return json_result
     except (HTTPError, KeyError, simplejson.errors.JSONDecodeError) as e:
@@ -105,7 +105,7 @@ def get_children(key):
         key=key
     )
     try:
-        response = requests.get(api_url)
+        response = gbif_get(api_url)
         json_response = response.json()
         if json_response['results']:
             return json_response['results']
@@ -137,7 +137,7 @@ def find_species(
         params.update(classifier)
 
     try:
-        response = requests.get(
+        response = gbif_get(
             f'{GBIF_API_V2}/species/match', params=params, timeout=10)
         if not response.ok:
             logger.warning(
@@ -218,7 +218,7 @@ def search_exact_match(species_name):
     """
     api_url = GBIF_API + '/species/match?name=' + str(species_name)
     try:
-        response = requests.get(api_url)
+        response = gbif_get(api_url)
         json_result = response.json()
         if json_result and 'usageKey' in json_result:
             key = json_result['usageKey']
@@ -420,7 +420,7 @@ def suggest_search(query_params):
         param=urllib.parse.urlencode(query_params)
     )
     try:
-        response = requests.get(api_url)
+        response = gbif_get(api_url)
         results = response.json()
         return results
     except (HTTPError, KeyError) as e:
@@ -440,7 +440,7 @@ def species_search(query_params):
         param=urllib.parse.urlencode(query_params)
     )
     try:
-        response = requests.get(api_url)
+        response = gbif_get(api_url)
         results = response.json()
         if "results" in results:
             return results["results"]
@@ -467,7 +467,7 @@ def gbif_name_suggest(**kwargs):
         params['kingdom'] = kingdom
 
     try:
-        response = requests.get(
+        response = gbif_get(
             f'{GBIF_API_V2}/species/match', params=params, timeout=10)
         if not response.ok:
             return None
@@ -494,16 +494,8 @@ def round_coordinates(coords):
 
 
 def _gbif_session():
-    """Requests session with sane retries/backoff for GBIF."""
-    s = requests.Session()
-    retries = Retry(
-        total=5,
-        backoff_factor=0.5,
-        status_forcelist=(429, 500, 502, 503, 504),
-        allowed_methods=frozenset(["GET"]),
-    )
-    s.mount("https://", HTTPAdapter(max_retries=retries))
-    return s
+    """Requests session with retries/backoff for GBIF."""
+    return gbif_session()
 
 
 def gbif_synonyms_by_usage(

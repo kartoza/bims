@@ -102,6 +102,12 @@ CITES_TOKEN_API = os.environ.get('CITES_TOKEN_API', '')
 
 from .ogc import *  # noqa
 
+# GBIF and Catalogue of Life API requests (bims/utils/gbif_http.py):
+# retries after the first attempt, backoff factor and timeout in seconds
+GBIF_MAX_RETRIES = int(os.environ.get('GBIF_MAX_RETRIES', 5))
+GBIF_RETRY_BACKOFF = float(os.environ.get('GBIF_RETRY_BACKOFF', 1))
+GBIF_REQUEST_TIMEOUT = float(os.environ.get('GBIF_REQUEST_TIMEOUT', 30))
+
 # ---------------------------------------------------------------------------
 # FIPS site-code generator – spatial layer configuration
 # ---------------------------------------------------------------------------

@@ -56,14 +56,14 @@ class TestTaxonIdentifier(TestCase):
     def setUp(self):
         self.gbif_key = 121
 
-    @mock.patch('requests.get', mock.Mock(
+    @mock.patch('bims.utils.gbif.gbif_get', mock.Mock(
         side_effect=mocked_gbif_request))
     def test_process_taxon(self):
         taxon_identifier = update_taxonomy_from_gbif(self.gbif_key, False)
         scientific_name = 'Elasmobranchii'
         self.assertEqual(scientific_name, taxon_identifier.scientific_name)
 
-    @mock.patch('requests.get', mock.Mock(
+    @mock.patch('bims.utils.gbif.gbif_get', mock.Mock(
         side_effect=mocked_gbif_request))
     def test_get_all_parent(self):
         taxon_identifier = update_taxonomy_from_gbif(self.gbif_key)
@@ -74,14 +74,14 @@ class TestTaxonIdentifier(TestCase):
             taxon_identifier = taxon_identifier.parent
         self.assertTrue(parent == 2)
 
-    @mock.patch('requests.get', mock.Mock(
+    @mock.patch('bims.utils.gbif.gbif_get', mock.Mock(
         side_effect=mocked_gbif_request))
     def test_search_taxon_identifier(self):
         species_name = 'Enteromius anoplus (Weber, 1897)'
         species = search_taxon_identifier(species_name, False)  # noqa
         # self.assertEqual(species_name, species.scientific_name)  # noqa
 
-    @mock.patch('requests.get', mock.Mock(
+    @mock.patch('bims.utils.gbif.gbif_get', mock.Mock(
         side_effect=mocked_gbif_request))
     def test_get_children(self):
         taxon_identifier = update_taxonomy_from_gbif(self.gbif_key)

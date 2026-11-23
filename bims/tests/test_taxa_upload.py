@@ -1192,6 +1192,192 @@ class TestSubgenusUpload(FastTenantTestCase):
 
     @mock.patch('bims.scripts.taxa_upload.get_species_by_col_id')
     @mock.patch('bims.scripts.taxa_upload.fetch_all_species_from_gbif')
+    def test_synonym_genus_checked_against_its_own_genus(
+        self, mock_fetch_gbif, mock_get_species_by_col_id
+    ):
+        """
+        For a synonym, COL's classification is that of the accepted name.
+        The CSV genus must be compared with the synonym's own genus too,
+        not only with the accepted genus.
+        """
+        mock_fetch_gbif.return_value = None
+        mock_get_species_by_col_id.return_value = {
+            'usage': {
+                'key': '8SQSN',
+                'name': 'Chalicodoma cradockense (Friese, 1909)',
+                'canonicalName': 'Chalicodoma cradockense',
+                'rank': 'SPECIES',
+                'status': 'SYNONYM',
+                'genericName': 'Chalicodoma',
+                'specificEpithet': 'cradockense',
+            },
+            'acceptedUsage': {
+                'key': '3YRG6',
+                'canonicalName': 'Megachile cradockensis',
+                'rank': 'SPECIES',
+            },
+            'classification': [
+                {'rank': 'FAMILY', 'name': 'Megachilidae'},
+                {'rank': 'GENUS', 'name': 'Megachile'},
+                {'rank': 'SPECIES', 'name': 'Megachile cradockensis'},
+            ],
+        }
+        errors = []
+        row = {
+            'Taxon Rank': 'Species',
+            'Kingdom': 'Animalia',
+            'Phylum': 'Arthropoda',
+            'Class': 'Insecta',
+            'Order': 'Hymenoptera',
+            'Family': 'Megachilidae',
+            'Genus': 'Chalicodoma',
+            'Species': 'cradockensis',
+            'Taxon': 'Chalicodoma cradockensis',
+            'Taxonomic status': 'SYNONYM',
+            'On GBIF': 'Yes',
+            'GBIF Link': 'https://www.gbif.org/taxon/8SQSN',
+            'Author(s)': '(Friese)',
+        }
+
+        processor = TaxaProcessor()
+        processor.all_keys = {}
+        processor.handle_error = lambda row, message: errors.append(message)
+        with mock.patch('bims.scripts.taxa_upload.preferences') as mock_prefs:
+            mock_prefs.SiteSetting.auto_validate_taxa_on_upload = True
+            processor.process_data(row, TaxonGroupF.create())
+
+        self.assertFalse(
+            [e for e in errors if 'genus mismatch' in e or 'name mismatch' in e],
+            errors)
+        mock_get_species_by_col_id.assert_called_with('8SQSN')
+
+    def _genus_row(self, col_id):
+        return {
+            'Taxon Rank': 'Genus',
+            'Kingdom': 'Animalia',
+            'Phylum': 'Arthropoda',
+            'Class': 'Insecta',
+            'Order': 'Hymenoptera',
+            'Family': 'Megachilidae',
+            'Genus': 'Serapista',
+            'Taxon': 'Serapista',
+            'Taxonomic status': 'ACCEPTED',
+            'On GBIF': 'Yes',
+            'GBIF Link': f'https://www.gbif.org/taxon/{col_id}',
+            'Author(s)': 'Cockerell, 1904',
+        }
+
+    @mock.patch('bims.scripts.taxa_upload.get_species_by_col_id')
+    @mock.patch('bims.scripts.taxa_upload.fetch_all_species_from_gbif')
+    def test_col_lookup_network_error_has_clear_message(
+        self, mock_fetch_gbif, mock_get_species_by_col_id
+    ):
+        import requests
+        mock_get_species_by_col_id.side_effect = (
+            requests.exceptions.ConnectionError(
+                "('Connection aborted.', ConnectionResetError(104, "
+                "'Connection reset by peer'))"))
+        errors = []
+        processor = TaxaProcessor()
+        processor.all_keys = {}
+        processor.handle_error = lambda row, message: errors.append(message)
+        with self.settings(GBIF_MAX_RETRIES=5):
+            processor.process_data(self._genus_row('644MF'), TaxonGroupF.create())
+
+        self.assertEqual(len(errors), 1)
+        self.assertIn('Could not reach GBIF/COL for COL id 644MF', errors[0])
+        self.assertIn('after 6 attempts', errors[0])
+        self.assertIn('connection was reset', errors[0])
+        mock_fetch_gbif.assert_not_called()
+
+    @mock.patch('bims.scripts.taxa_upload.get_species_by_col_id')
+    @mock.patch('bims.scripts.taxa_upload.fetch_all_species_from_gbif')
+    def test_network_error_later_in_the_row_has_clear_message(
+        self, mock_fetch_gbif, mock_get_species_by_col_id
+    ):
+        import requests
+        mock_get_species_by_col_id.return_value = {
+            'usage': {
+                'key': 'SQF5W', 'canonicalName': 'Serapista',
+                'rank': 'GENUS', 'genericName': 'Serapista',
+            },
+            'classification': [{'rank': 'GENUS', 'name': 'Serapista'}],
+        }
+        mock_fetch_gbif.side_effect = requests.exceptions.ConnectionError(
+            'Connection reset by peer')
+        errors = []
+        processor = TaxaProcessor()
+        processor.all_keys = {}
+        processor.handle_error = lambda row, message: errors.append(message)
+        with mock.patch('bims.scripts.taxa_upload.preferences') as mock_prefs:
+            mock_prefs.SiteSetting.auto_validate_taxa_on_upload = True
+            processor.process_data(self._genus_row('SQF5W'), TaxonGroupF.create())
+
+        self.assertTrue(errors)
+        self.assertIn('Could not reach GBIF/COL for "Serapista"', errors[-1])
+        self.assertNotIn('Connection aborted', errors[-1])
+
+    def test_upload_output_columns_not_kept_in_additional_data(self):
+        """error_message and link come from the uploader's own error and
+        success files; re-uploading such a file must not store them."""
+        row = {
+            'Taxon': 'Chalicodoma cradockensis',
+            'Genus': 'Chalicodoma',
+            'Family': 'Megachilidae',
+            'error_message': 'COL id 8SQSN: genus mismatch',
+            'Link': 'http://example.org/admin/bims/taxonomy/1',
+        }
+        processor = TaxaProcessor()
+        processor.all_keys = {}
+        cleaned = processor._clean_additional_data(row)
+        self.assertEqual(cleaned['Genus'], 'Chalicodoma')
+        self.assertEqual(cleaned['Family'], 'Megachilidae')
+        self.assertNotIn('error_message', cleaned)
+        self.assertNotIn('Link', cleaned)
+
+    @mock.patch('bims.scripts.taxa_upload.get_species_by_col_id')
+    @mock.patch('bims.scripts.taxa_upload.fetch_all_species_from_gbif')
+    def test_col_genus_mismatch_still_rejected(
+        self, mock_fetch_gbif, mock_get_species_by_col_id
+    ):
+        """A genus matching neither the name nor its classification is
+        still rejected when the epithet differs."""
+        mock_fetch_gbif.return_value = None
+        mock_get_species_by_col_id.return_value = {
+            'usage': {
+                'key': 'XYZ1',
+                'canonicalName': 'Megachile cradockensis',
+                'rank': 'SPECIES',
+                'genericName': 'Megachile',
+            },
+            'classification': [{'rank': 'GENUS', 'name': 'Megachile'}],
+        }
+        errors = []
+        row = {
+            'Taxon Rank': 'Species',
+            'Kingdom': 'Animalia',
+            'Phylum': 'Arthropoda',
+            'Class': 'Insecta',
+            'Order': 'Hymenoptera',
+            'Family': 'Megachilidae',
+            'Genus': 'Osmia',
+            'Species': 'bicolor',
+            'Taxon': 'Osmia bicolor',
+            'Taxonomic status': 'accepted',
+            'On GBIF': 'Yes',
+            'GBIF Link': 'https://www.gbif.org/taxon/XYZ1',
+            'Author(s)': '',
+        }
+
+        processor = TaxaProcessor()
+        processor.all_keys = {}
+        processor.handle_error = lambda row, message: errors.append(message)
+        processor.process_data(row, TaxonGroupF.create())
+
+        self.assertTrue(any('genus mismatch' in e for e in errors), errors)
+
+    @mock.patch('bims.scripts.taxa_upload.get_species_by_col_id')
+    @mock.patch('bims.scripts.taxa_upload.fetch_all_species_from_gbif')
     def test_gbif_species_link_rejected_when_on_gbif(
         self, mock_fetch_gbif, mock_get_species_by_col_id
     ):

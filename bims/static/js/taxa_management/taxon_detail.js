@@ -73,29 +73,47 @@ export const taxonDetail = (() => {
         return data;
     }
 
-    // A synonym can have been described under a different family/subfamily than
-    // its accepted taxon. The upload keeps the original classification in
-    // additional_data, so show it alongside the accepted hierarchy.
-    function originalClassification(data) {
+    function escapeHtml(value) {
+        return String(value ?? '').replace(/[&<>"']/g, ch => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+        }[ch]));
+    }
+
+    function sameRankName(a, b) {
+        return String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
+    }
+
+    // A synonym can have been described under a different genus, tribe or
+    // family than its accepted taxon. The upload keeps the original
+    // classification in additional_data; show the levels that differ from the
+    // accepted hierarchy (all of them when that hierarchy is not available).
+    function originalClassification(data, hierarchySource) {
         const extra = data?.additional_data;
         if (!extra) {
             return '';
         }
-        const parts = [['Family', 'Family'], ['SubFamily', 'Subfamily'],
-            ['Tribe', 'Tribe'], ['SubTribe', 'Subtribe'], ['Genus', 'Genus']]
-            .filter(([key]) => extra[key])
-            .map(([key, label]) => `${label}: <strong>${extra[key]}</strong>`);
+        const compareWith = hierarchySource && hierarchySource !== data ? hierarchySource : null;
+        const parts = [
+            ['Family', 'family', 'Family'],
+            ['SubFamily', 'subfamily', 'Subfamily'],
+            ['Tribe', 'tribe', 'Tribe'],
+            ['SubTribe', 'subtribe', 'Subtribe'],
+            ['Genus', 'genus', 'Genus'],
+        ]
+            .filter(([key, acceptedKey]) => extra[key] &&
+                !(compareWith && sameRankName(extra[key], compareWith[acceptedKey])))
+            .map(([key, , label]) => `${label}: <strong>${escapeHtml(extra[key])}</strong>`);
         if (!parts.length) {
             return '';
         }
-        return `<br/>As originally classified &mdash; ${parts.join(' &middot; ')}`;
+        return `<br/>As originally classified - ${parts.join(' &middot; ')}`;
     }
 
     function acceptedHierarchyNotice(data, hierarchySource) {
         if (!shouldUseAcceptedHierarchy(data)) {
             return '';
         }
-        const originalNote = originalClassification(data);
+        const originalNote = originalClassification(data, hierarchySource);
         if (!hierarchySource || hierarchySource === data) {
             const statusLabel = (data?.taxonomic_status || 'Synonym').replace(/_/g, ' ');
             return `

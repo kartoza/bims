@@ -30,6 +30,7 @@ from bims.utils.fetch_gbif import (
 from bims.utils.taxonomy import resolve_addendum_code, strip_addendum_from_name
 from bims.scripts.data_upload import DataCSVUpload
 from bims.utils.gbif import get_species, get_species_by_col_id
+from bims.utils.gbif_http import describe_request_error, max_retries
 from td_biblio.exceptions import DOILoaderError
 from td_biblio.models import Entry
 from td_biblio.utils.loaders import DOILoader
@@ -39,6 +40,7 @@ from preferences import preferences
 logger = logging.getLogger('bims')
 
 NAME_SIM_THRESHOLD = 0.70
+UPLOAD_OUTPUT_COLUMNS = {'error_message', 'link'}
 _TRUTHY = {'y', 'true', 't', '✓'}
 INFRA_MARKER_RE = re.compile(
     r'\b(?:subsp|ssp|subspecies|var|variety|forma|form|f)\.?\b',
@@ -66,6 +68,16 @@ def _safe_upper(s):
 
 def _safe_strip(s):
     return str(s or '').strip()
+
+def network_error_message(exc, subject: str) -> str:
+    """Error for a row whose GBIF/COL request failed after every retry."""
+    attempts = max_retries() + 1
+    return (
+        f"Could not reach GBIF/COL for {subject} after {attempts} "
+        f"attempt{'s' if attempts != 1 else ''} ({describe_request_error(exc)}). "
+        f"This is a temporary network problem; upload this row again."
+    )
+
 
 def _canon(s: str) -> str:
     return re.sub(r"\s+", " ", str(s or "")).strip().lower()
@@ -342,6 +354,9 @@ class TaxaProcessor(object):
                     cleaned[key] = meta_val
                 except TypeError:
                     cleaned[key] = str(meta_val)
+                continue
+
+            if isinstance(key, str) and key.strip().lower() in UPLOAD_OUTPUT_COLUMNS:
                 continue
 
             val = self.get_row_value(row, key)
@@ -973,10 +988,17 @@ class TaxaProcessor(object):
         if col_id:
             try:
                 col_rec = get_species_by_col_id(col_id)
-            except Exception as e:
+            except requests.RequestException as e:
+                logger.warning('COL lookup failed for id %s: %s', col_id, e)
                 self.handle_error(
                     row=row,
-                    message=f"COL lookup failed for id {col_id}")
+                    message=network_error_message(e, f"COL id {col_id}"))
+                return
+            except Exception as e:
+                logger.exception('COL lookup failed for id %s', col_id)
+                self.handle_error(
+                    row=row,
+                    message=f"COL lookup failed for id {col_id}: {e}")
                 return
 
             col_usage = (col_rec or {}).get("usage") or {}
@@ -1023,11 +1045,19 @@ class TaxaProcessor(object):
                         if _safe_upper(entry.get("rank")) == "GENUS":
                             col_genus = _safe_strip(entry.get("name"))
                             break
+                    # For a synonym the classification is that of the accepted
+                    # name, so its genus can differ from the synonym's own genus
+                    col_genera = {
+                        _canon(g) for g in (
+                            col_genus, _safe_strip(col_usage.get("genericName"))
+                        ) if g
+                    }
 
                     # Handle genus mismatch more gracefully if the specific epithet matches
                     # For FADA sites, keep csv_genus even if there's a mismatch
                     genus_mismatch = (
-                        rank.lower() != 'genus' and csv_genus and col_genus and csv_genus.lower() != col_genus.lower()
+                        rank.lower() != 'genus' and csv_genus and col_genera and
+                        _canon(csv_genus) not in col_genera
                     )
                     if genus_mismatch and not is_fada_site():
                         csv_ep = self._specific_epithet(expected_name) or self._specific_epithet(taxon_name) or _canon(_safe_strip(self.get_row_value(row, SPECIES)))
@@ -1709,6 +1739,9 @@ class TaxaProcessor(object):
 
             self.finish_processing_row(row, taxonomy)
 
+        except requests.RequestException as e:
+            logger.warning('Network error processing row for "%s": %s', taxon_name, e)
+            self.handle_error(row, network_error_message(e, f'"{taxon_name}"'))
         except Exception as e:  # noqa
             logger.exception('Error processing row for "%s": %s', taxon_name, e)
             self.handle_error(row, str(e))
