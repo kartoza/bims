@@ -10,7 +10,11 @@ from bims.api_views.taxon_update import create_taxon_proposal
 from bims.models import Taxonomy
 from bims.scripts.taxa_upload import TaxaProcessor
 from bims.utils.fetch_gbif import harvest_synonyms_for_accepted_taxonomy
-from bims.utils.taxonworks import get_taxon_name, taxonworks_record_to_additional_data
+from bims.utils.taxonworks import (
+    get_taxon_name,
+    taxonworks_record_is_extinct,
+    taxonworks_record_to_additional_data,
+)
 
 logger = logging.getLogger("bims")
 
@@ -31,8 +35,10 @@ class TaxonWorksTaxaProcessor(TaxaProcessor):
     def __init__(self, base_url: str | None = None,
                  project_token: str | None = None,
                  records_by_id: dict[int, dict] | None = None,
-                 otus_by_taxon_name_id: dict[int, int] | None = None):
+                 otus_by_taxon_name_id: dict[int, int] | None = None,
+                 exclude_extinct: bool = False):
         self.base_url = base_url
+        self.exclude_extinct = exclude_extinct
         self.project_token = project_token
         # Use `is not None` so that an empty dict passed by the caller keeps its
         # identity - the harvester updates these dicts in-place per page.
@@ -45,6 +51,19 @@ class TaxonWorksTaxaProcessor(TaxaProcessor):
 
     def finish_processing_row(self, row, taxonomy):
         pass
+
+    def is_extinct(self, record: dict) -> bool:
+        """
+        Whether *record* is extinct, or is another name of an extinct taxon.
+        """
+        if taxonworks_record_is_extinct(record):
+            return True
+        valid_id = record.get("cached_valid_taxon_name_id")
+        record_id = record.get("id")
+        if not (valid_id and record_id and int(valid_id) != int(record_id)):
+            return False
+        accepted_record = self._fetch_record(int(valid_id))
+        return bool(accepted_record) and taxonworks_record_is_extinct(accepted_record)
 
     def _accepted_rank(self, record: dict) -> str | None:
         """Rank of the accepted name *record* points to, if it is another record."""
@@ -112,16 +131,83 @@ class TaxonWorksTaxaProcessor(TaxaProcessor):
         if not canonical_name:
             return None
 
-        taxonomy = Taxonomy.objects.filter(
-            canonical_name__iexact=canonical_name,
-            rank=rank,
-        ).first()
-        if taxonomy:
-            return taxonomy
+        if taxon_name_id:
+            taxonomy = Taxonomy.objects.filter(
+                taxonworks_id=int(taxon_name_id)
+            ).order_by("id").first()
+            if taxonomy:
+                return taxonomy
 
-        matches = Taxonomy.objects.filter(canonical_name__iexact=canonical_name)
-        if matches.count() == 1:
-            return matches.first()
+        same_rank = [
+            t for t in Taxonomy.objects.filter(
+                canonical_name__iexact=canonical_name, rank=rank,
+            ).order_by("id")
+            if self._can_reuse(t, record)
+        ]
+        if same_rank:
+            return same_rank[0]
+
+        matches = [
+            t for t in Taxonomy.objects.filter(
+                canonical_name__iexact=canonical_name
+            ).order_by("id")
+            if self._can_reuse(t, record)
+        ]
+        if len(matches) == 1:
+            return matches[0]
+        return None
+
+    @staticmethod
+    def _can_reuse(taxonomy: Taxonomy, record: dict) -> bool:
+        """
+        Whether a name-matched *taxonomy* may be taken over by *record*.
+
+        TaxonWorks often has several names with the same spelling: the valid
+        protonym, a subsequent combination of it, or an invalid homonym that
+        belongs to another taxon. A row already harvested from one of those
+        names must not be overwritten by a name that is a different taxon,
+        otherwise a valid species ends up as a synonym (or the other way round).
+        """
+        owner_id = taxonomy.taxonworks_id
+        record_id = int(record["id"]) if record.get("id") else None
+        if not owner_id or owner_id == record_id:
+            return True
+
+        owner_data = taxonomy.additional_data if isinstance(taxonomy.additional_data, dict) else {}
+        owner_valid = owner_data.get("cached_is_valid")
+        if owner_valid is None:
+            owner_valid = taxonomy.taxonomic_status == "ACCEPTED"
+        owner_valid_id = owner_data.get("_taxonworks_valid_taxon_name_id") or owner_id
+
+        record_valid = record.get("cached_is_valid", True)
+        record_valid_id = record.get("cached_valid_taxon_name_id") or record_id
+
+        if record_valid:
+            return bool(owner_valid) or int(owner_valid_id) == record_id
+
+        return not owner_valid and int(owner_valid_id) == int(record_valid_id)
+
+    def _same_name_accepted_record(self, record: dict) -> dict | None:
+        """
+        The accepted record of an invalid *record* spelled exactly like it
+        (typically a Combination repeating the current name of a species), or
+        None. Such a record is the accepted taxon itself, not a synonym.
+        """
+        if record.get("cached_is_valid", True):
+            return None
+        valid_id = record.get("cached_valid_taxon_name_id")
+        record_id = record.get("id")
+        if not (valid_id and record_id and int(valid_id) != int(record_id)):
+            return None
+        accepted_record = self._fetch_record(int(valid_id))
+        if not accepted_record:
+            return None
+        name = (record.get("cached") or record.get("name") or "").strip().lower()
+        accepted_name = (
+            accepted_record.get("cached") or accepted_record.get("name") or ""
+        ).strip().lower()
+        if name and name == accepted_name:
+            return accepted_record
         return None
 
     def _walk_to_kingdom(self, taxonomy: Taxonomy, _depth: int = 0) -> bool:
@@ -341,7 +427,17 @@ class TaxonWorksTaxaProcessor(TaxaProcessor):
             _stack = set(_stack)
             _stack.add(record_id)
 
-        rank = (record.get("rank") or "").strip().upper() or self._infer_rank(record)
+        if self.exclude_extinct and self.is_extinct(record):
+            return None
+
+        same_name_accepted = self._same_name_accepted_record(record)
+        if same_name_accepted is not None:
+            taxonomy = self._ensure_taxonomy(same_name_accepted, _stack=_stack)
+            if taxonomy and record_id:
+                self.taxonomies_by_taxonworks_id[record_id] = taxonomy
+            return taxonomy
+
+        rank =(record.get("rank") or "").strip().upper() or self._infer_rank(record)
         if not rank:
             self.handle_error(
                 record,
@@ -395,6 +491,9 @@ class TaxonWorksTaxaProcessor(TaxaProcessor):
             accepted_record = self._fetch_record(int(valid_id))
             if accepted_record:
                 accepted_taxonomy = self._ensure_taxonomy(accepted_record, _stack=_stack)
+        if accepted_taxonomy is not None and accepted_taxonomy.pk == taxonomy.pk:
+            taxonomy.taxonomic_status = "ACCEPTED"
+            accepted_taxonomy = None
         taxonomy.accepted_taxonomy = accepted_taxonomy
 
         taxonomy.additional_data = taxonworks_record_to_additional_data(record, self.base_url or "")
@@ -454,7 +553,8 @@ class TaxonWorksTaxaProcessor(TaxaProcessor):
 class SessionTaxonWorksTaxaProcessor:
     def __init__(self, log_fn, base_url: str, project_token: str,
                  records_by_id: dict[int, dict] | None = None,
-                 otus_by_taxon_name_id: dict[int, int] | None = None):
+                 otus_by_taxon_name_id: dict[int, int] | None = None,
+                 exclude_extinct: bool = False):
         class _Processor(TaxonWorksTaxaProcessor):
             def handle_error(self_, row, message):  # noqa: N805
                 log_fn(f"Row error TaxonWorksID={row.get('id')}: {message}")
@@ -467,7 +567,11 @@ class SessionTaxonWorksTaxaProcessor:
             project_token=project_token,
             records_by_id=records_by_id,
             otus_by_taxon_name_id=otus_by_taxon_name_id,
+            exclude_extinct=exclude_extinct,
         )
+
+    def is_extinct(self, record: dict) -> bool:
+        return self._processor.is_extinct(record)
 
     def process(self, record: dict, taxon_group, harvest_synonyms: bool):
         with transaction.atomic():

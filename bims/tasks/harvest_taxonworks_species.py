@@ -21,7 +21,8 @@ PAGE_FETCH_BACKOFF_SECONDS = 30
 class _SessionTaxonWorksTaxaProcessor:
     def __init__(self, log_fn, base_url: str, project_token: str,
                  records_by_id: dict[int, dict],
-                 otus_by_taxon_name_id: dict[int, int]):
+                 otus_by_taxon_name_id: dict[int, int],
+                 exclude_extinct: bool = False):
         from bims.scripts.taxa_upload_taxonworks import SessionTaxonWorksTaxaProcessor
         self._processor = SessionTaxonWorksTaxaProcessor(
             log_fn,
@@ -29,7 +30,11 @@ class _SessionTaxonWorksTaxaProcessor:
             project_token=project_token,
             records_by_id=records_by_id,
             otus_by_taxon_name_id=otus_by_taxon_name_id,
+            exclude_extinct=exclude_extinct,
         )
+
+    def is_extinct(self, record: dict) -> bool:
+        return self._processor.is_extinct(record)
 
     def process(self, record: dict, taxon_group, harvest_synonyms: bool):
         return self._processor.process(
@@ -155,6 +160,7 @@ def harvest_taxonworks_species(session_id: int, schema_name: str):
             project_token=project_token,
             records_by_id=records_cache,
             otus_by_taxon_name_id=otus_cache,
+            exclude_extinct=exclude_extinct,
         )
 
         def _process_record(record: dict):
@@ -168,10 +174,15 @@ def harvest_taxonworks_species(session_id: int, schema_name: str):
             if record_id in processed_ids:
                 return
 
-            if exclude_extinct and taxonworks_record_is_extinct(record):
+            if exclude_extinct and processor.is_extinct(record):
+                via_accepted = (
+                    "" if taxonworks_record_is_extinct(record)
+                    else f", name of extinct taxon id="
+                         f"{record.get('cached_valid_taxon_name_id')}"
+                )
                 _log(
                     f"Skipping extinct taxon id={record_id} "
-                    f"({record.get('cached', '')})"
+                    f"({record.get('cached', '')}{via_accepted})"
                 )
                 processed_ids.add(record_id)
                 return

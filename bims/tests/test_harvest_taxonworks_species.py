@@ -291,6 +291,78 @@ class TestHarvestTaxonWorksSpeciesTask(FastTenantTestCase):
         self.assertTrue(Taxonomy.objects.filter(canonical_name='Perla marginata', rank='SPECIES').exists())
         self.assertFalse(Taxonomy.objects.filter(canonical_name='Thaumatophora').exists())
 
+    @mock.patch(_PATCH_PREFS)
+    @mock.patch(_PATCH_SLEEP, return_value=None)
+    @mock.patch(_PATCH_HTTP_GET)
+    @mock.patch(_PATCH_CONNECT)
+    @mock.patch(_PATCH_DISCONNECT)
+    def test_combination_of_extinct_species_skipped(
+        self, mock_dis, mock_con, mock_http_get, mock_sleep, mock_prefs
+    ):
+        """
+        TaxonWorks puts no dagger on a Combination of a fossil species, so
+        the harvest must look at its accepted name; neither the combination
+        nor the fossil it points to may be created.
+        """
+        mock_prefs.SiteSetting.auto_validate_taxa_on_upload = True
+        root = _record(100, 'Plecoptera', 'order', parent_id=10)
+        genus = _record(110, 'Gondwanoperlidium', 'genus', parent_id=100, extinct=True)
+        fossil = _record(111, 'Gondwanoperlidium triassicum', 'species',
+                         parent_id=110, extinct=True)
+        same_name = _record(120, 'Gondwanoperlidium triassicum', None,
+                            parent_id=110, valid=False, valid_id=111)
+        other_name = _record(121, 'Euxenoperla triassica', None,
+                             parent_id=100, valid=False, valid_id=111)
+        for comb in (same_name, other_name):
+            comb['name'] = None
+            comb['type'] = 'Combination'
+        living = _record(130, 'Perla marginata', 'species', parent_id=100)
+        mock_http_get.side_effect = self._mock_http_get(
+            [[root, genus, fossil, same_name, other_name, living]]
+        )
+
+        session = self._make_session()
+        harvest_taxonworks_species(session.id, schema_name=self.schema_name)
+
+        self.assertFalse(
+            Taxonomy.objects.filter(canonical_name='Gondwanoperlidium triassicum').exists()
+        )
+        self.assertFalse(
+            Taxonomy.objects.filter(canonical_name='Euxenoperla triassica').exists()
+        )
+        self.assertTrue(Taxonomy.objects.filter(canonical_name='Perla marginata').exists())
+
+    @mock.patch(_PATCH_PREFS)
+    @mock.patch(_PATCH_SLEEP, return_value=None)
+    @mock.patch(_PATCH_HTTP_GET)
+    @mock.patch(_PATCH_CONNECT)
+    @mock.patch(_PATCH_DISCONNECT)
+    def test_extinct_harvested_when_not_excluded(
+        self, mock_dis, mock_con, mock_http_get, mock_sleep, mock_prefs
+    ):
+        mock_prefs.SiteSetting.auto_validate_taxa_on_upload = True
+        root = _record(100, 'Plecoptera', 'order', parent_id=10)
+        genus = _record(110, 'Gondwanoperlidium', 'genus', parent_id=100, extinct=True)
+        fossil = _record(111, 'Gondwanoperlidium triassicum', 'species',
+                         parent_id=110, extinct=True)
+        comb = _record(121, 'Euxenoperla triassica', None,
+                       parent_id=100, valid=False, valid_id=111)
+        comb['name'] = None
+        comb['type'] = 'Combination'
+        mock_http_get.side_effect = self._mock_http_get([[root, genus, fossil, comb]])
+
+        session = self._make_session({
+            'base_url': 'https://test.taxonworks.org',
+            'project_token': 'token',
+            'exclude_extinct': False,
+        })
+        harvest_taxonworks_species(session.id, schema_name=self.schema_name)
+
+        fossil_taxon = Taxonomy.objects.get(canonical_name='Gondwanoperlidium triassicum')
+        self.assertEqual(fossil_taxon.taxonomic_status, 'ACCEPTED')
+        syn = Taxonomy.objects.get(canonical_name='Euxenoperla triassica')
+        self.assertEqual(syn.accepted_taxonomy_id, fossil_taxon.id)
+
     # ------------------------------------------------------------------
     # Synonym links to accepted taxonomy
     # ------------------------------------------------------------------
@@ -359,6 +431,126 @@ class TestHarvestTaxonWorksSpeciesTask(FastTenantTestCase):
         self.assertEqual(syn.accepted_taxonomy.canonical_name, 'Neophron percnopterus')
         # Rankless and not connected to an accepted name: still skipped
         self.assertFalse(Taxonomy.objects.filter(canonical_name='Gyps unknownus').exists())
+
+    @mock.patch(_PATCH_PREFS)
+    @mock.patch(_PATCH_SLEEP, return_value=None)
+    @mock.patch(_PATCH_HTTP_GET)
+    @mock.patch(_PATCH_CONNECT)
+    @mock.patch(_PATCH_DISCONNECT)
+    def test_same_name_combination_keeps_species_accepted(
+        self, mock_dis, mock_con, mock_http_get, mock_sleep, mock_prefs
+    ):
+        """
+        A Combination spelled exactly like the valid species it points to
+        (e.g. TaxonWorks 1042895 'Acroneuria abnormis' -> 1003213) must not
+        turn the species into a synonym of itself.
+        """
+        mock_prefs.SiteSetting.auto_validate_taxa_on_upload = True
+        root = _record(100, 'Plecoptera', 'order', parent_id=10)
+        genus = _record(110, 'Acroneuria', 'genus', parent_id=100)
+        species = _record(111, 'Acroneuria abnormis', 'species', parent_id=110)
+        combination = _record(120, 'Acroneuria abnormis', None, parent_id=110,
+                              valid=False, valid_id=111)
+        combination['name'] = None
+        combination['type'] = 'Combination'
+        mock_http_get.side_effect = self._mock_http_get(
+            [[root, genus, species, combination]]
+        )
+
+        session = self._make_session()
+        harvest_taxonworks_species(session.id, schema_name=self.schema_name)
+
+        taxa = Taxonomy.objects.filter(canonical_name='Acroneuria abnormis')
+        self.assertEqual(taxa.count(), 1)
+        taxon = taxa.get()
+        self.assertEqual(taxon.taxonomic_status, 'ACCEPTED')
+        self.assertIsNone(taxon.accepted_taxonomy)
+        self.assertEqual(taxon.taxonworks_id, 111)
+
+    @mock.patch(_PATCH_PREFS)
+    @mock.patch(_PATCH_SLEEP, return_value=None)
+    @mock.patch(_PATCH_HTTP_GET)
+    @mock.patch(_PATCH_CONNECT)
+    @mock.patch(_PATCH_DISCONNECT)
+    def test_invalid_homonym_does_not_overwrite_valid_species(
+        self, mock_dis, mock_con, mock_http_get, mock_sleep, mock_prefs
+    ):
+        """
+        An invalid name spelled like a valid species but belonging to another
+        taxon gets its own synonym row instead of flipping the valid species.
+        """
+        mock_prefs.SiteSetting.auto_validate_taxa_on_upload = True
+        root = _record(100, 'Plecoptera', 'order', parent_id=10)
+        genus = _record(110, 'Acroneuria', 'genus', parent_id=100)
+        arida = _record(111, 'Acroneuria arida', 'species', parent_id=110)
+        other = _record(112, 'Acroneuria other', 'species', parent_id=110)
+        homonym = _record(120, 'Acroneuria arida', 'species', parent_id=110,
+                          valid=False, valid_id=112)
+        mock_http_get.side_effect = self._mock_http_get(
+            [[root, genus, arida, other, homonym]]
+        )
+
+        session = self._make_session()
+        harvest_taxonworks_species(session.id, schema_name=self.schema_name)
+
+        valid = Taxonomy.objects.get(taxonworks_id=111)
+        self.assertEqual(valid.canonical_name, 'Acroneuria arida')
+        self.assertEqual(valid.taxonomic_status, 'ACCEPTED')
+        self.assertIsNone(valid.accepted_taxonomy)
+
+        syn = Taxonomy.objects.get(taxonworks_id=120)
+        self.assertNotEqual(syn.pk, valid.pk)
+        self.assertEqual(syn.taxonomic_status, 'SYNONYM')
+        self.assertEqual(syn.accepted_taxonomy.canonical_name, 'Acroneuria other')
+
+    @mock.patch(_PATCH_PREFS)
+    @mock.patch(_PATCH_SLEEP, return_value=None)
+    @mock.patch(_PATCH_HTTP_GET)
+    @mock.patch(_PATCH_CONNECT)
+    @mock.patch(_PATCH_DISCONNECT)
+    def test_reharvest_repairs_species_flipped_by_combination(
+        self, mock_dis, mock_con, mock_http_get, mock_sleep, mock_prefs
+    ):
+        """
+        A species left as a synonym of itself by an earlier harvest (its row
+        taken over by a same-name Combination) is accepted again on re-harvest.
+        """
+        mock_prefs.SiteSetting.auto_validate_taxa_on_upload = True
+        root = _record(100, 'Plecoptera', 'order', parent_id=10)
+        genus = _record(110, 'Acroneuria', 'genus', parent_id=100)
+        species = _record(111, 'Acroneuria abnormis', 'species', parent_id=110)
+        combination = _record(120, 'Acroneuria abnormis', None, parent_id=110,
+                              valid=False, valid_id=111)
+        combination['name'] = None
+        combination['type'] = 'Combination'
+
+        broken = Taxonomy.objects.create(
+            canonical_name='Acroneuria abnormis',
+            scientific_name='Acroneuria abnormis',
+            rank='SPECIES',
+            taxonomic_status='SYNONYM',
+            taxonworks_id=120,
+            additional_data={
+                'cached_is_valid': False,
+                '_taxonworks_valid_taxon_name_id': 111,
+            },
+        )
+        broken.accepted_taxonomy = broken
+        broken.save()
+
+        mock_http_get.side_effect = self._mock_http_get(
+            [[root, genus, species, combination]]
+        )
+        session = self._make_session()
+        harvest_taxonworks_species(session.id, schema_name=self.schema_name)
+
+        self.assertEqual(
+            Taxonomy.objects.filter(canonical_name='Acroneuria abnormis').count(), 1
+        )
+        broken.refresh_from_db()
+        self.assertEqual(broken.taxonomic_status, 'ACCEPTED')
+        self.assertIsNone(broken.accepted_taxonomy)
+        self.assertEqual(broken.taxonworks_id, 111)
 
     # ------------------------------------------------------------------
     # OTU ID is stored on Taxonomy
