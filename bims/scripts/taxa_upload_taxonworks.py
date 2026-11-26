@@ -147,11 +147,14 @@ class TaxonWorksTaxaProcessor(TaxaProcessor):
         if same_rank:
             return same_rank[0]
 
+        # Across ranks, only take over a row no other TaxonWorks name owns:
+        record_id = int(taxon_name_id) if taxon_name_id else None
         matches = [
             t for t in Taxonomy.objects.filter(
                 canonical_name__iexact=canonical_name
             ).order_by("id")
-            if self._can_reuse(t, record)
+            if (not t.taxonworks_id or t.taxonworks_id == record_id)
+            and self._can_reuse(t, record)
         ]
         if len(matches) == 1:
             return matches[0]
@@ -455,6 +458,20 @@ class TaxonWorksTaxaProcessor(TaxaProcessor):
         parent_record = self._fetch_record(record.get("parent_id"))
         if parent_record and (parent_record.get("rank") or "").strip():
             parent = self._ensure_taxonomy(parent_record, _stack=_stack)
+
+        # TaxonWorks can place a name under a higher rank spelled the same,
+        # e.g. genus Nemoura (999124) under infratribe Nemoura (999123). BIMS
+        # does not allow a parent with the taxon's own name, so the same-name
+        # level is skipped and the taxon goes under the next ancestor instead.
+        _depth = 0
+        while (
+            parent
+            and parent.canonical_name.strip().lower() == canonical_name.lower()
+            and (parent.rank or "").upper() != rank
+            and _depth < 10
+        ):
+            parent = parent.parent
+            _depth += 1
 
         if parent and parent.canonical_name.strip().lower() == canonical_name.lower():
             self.handle_error(record, "Parent cannot have the same name as the taxon")
