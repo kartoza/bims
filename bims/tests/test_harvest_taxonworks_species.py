@@ -437,6 +437,50 @@ class TestHarvestTaxonWorksSpeciesTask(FastTenantTestCase):
     @mock.patch(_PATCH_HTTP_GET)
     @mock.patch(_PATCH_CONNECT)
     @mock.patch(_PATCH_DISCONNECT)
+    def test_genus_under_same_name_infratribe_goes_under_next_ancestor(
+        self, mock_dis, mock_con, mock_http_get, mock_sleep, mock_prefs
+    ):
+        """
+        TaxonWorks has genus Nemoura (999124) under infratribe Nemoura
+        (999123). The genus must still be created, under the subfamily, and
+        keep its species; other genera stay under the infratribe.
+        """
+        mock_prefs.SiteSetting.auto_validate_taxa_on_upload = True
+        kingdom = _record(1, 'Animalia', 'kingdom')
+        order = _record(100, 'Plecoptera', 'order', parent_id=1)
+        family = _record(101, 'Nemouridae', 'family', parent_id=100)
+        subfamily = _record(102, 'Nemourinae', 'subfamily', parent_id=101)
+        infratribe = _record(103, 'Nemoura', 'infratribe', parent_id=102)
+        genus = _record(104, 'Nemoura', 'genus', parent_id=103)
+        species = _record(105, 'Nemoura cinerea', 'species', parent_id=104)
+        other_genus = _record(106, 'Illiesonemoura', 'genus', parent_id=103)
+        other_species = _record(107, 'Illiesonemoura alabeli', 'species', parent_id=106)
+        mock_http_get.side_effect = self._mock_http_get([[
+            kingdom, order, family, subfamily, infratribe, genus, species,
+            other_genus, other_species,
+        ]])
+
+        session = self._make_session()
+        harvest_taxonworks_species(session.id, schema_name=self.schema_name)
+
+        nemoura_genus = Taxonomy.objects.get(canonical_name='Nemoura', rank='GENUS')
+        self.assertEqual(nemoura_genus.taxonworks_id, 104)
+        self.assertEqual(nemoura_genus.parent.canonical_name, 'Nemourinae')
+
+        cinerea = Taxonomy.objects.get(canonical_name='Nemoura cinerea')
+        self.assertEqual(cinerea.parent_id, nemoura_genus.id)
+
+        infratribe_taxon = Taxonomy.objects.get(canonical_name='Nemoura', rank='INFRATRIBE')
+        alabeli = Taxonomy.objects.get(canonical_name='Illiesonemoura alabeli')
+        self.assertEqual(alabeli.parent.canonical_name, 'Illiesonemoura')
+        self.assertEqual(alabeli.parent.parent_id, infratribe_taxon.id)
+        self.assertEqual(infratribe_taxon.parent.parent.canonical_name, 'Nemouridae')
+
+    @mock.patch(_PATCH_PREFS)
+    @mock.patch(_PATCH_SLEEP, return_value=None)
+    @mock.patch(_PATCH_HTTP_GET)
+    @mock.patch(_PATCH_CONNECT)
+    @mock.patch(_PATCH_DISCONNECT)
     def test_same_name_combination_keeps_species_accepted(
         self, mock_dis, mock_con, mock_http_get, mock_sleep, mock_prefs
     ):
