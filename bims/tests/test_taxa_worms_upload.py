@@ -48,7 +48,19 @@ class TestWormsTaxaUpload(FastTenantTestCase):
         uploader.upload_session = self.upload_session
         uploader.start('cp1252')
 
-        self.assertEqual(uploader.error_list, [])
+        # Only names with no accepted name in WoRMS are skipped
+        skipped = {
+            int(r['AphiaID']) for r in uploader.error_list
+            if r['error_message'].startswith('Skipped:')
+        }
+        self.assertEqual(
+            [r for r in uploader.error_list
+             if not r['error_message'].startswith('Skipped:')],
+            [],
+        )
+        # temporary name, unavailable name and unaccepted without accepted name
+        self.assertTrue({382327, 851337, 863169, 578938} <= skipped)
+        self.assertFalse(Taxonomy.objects.filter(aphia_id__in=skipped).exists())
 
         # Species created with proper rank and author
         sp = Taxonomy.objects.get(
@@ -87,13 +99,6 @@ class TestWormsTaxaUpload(FastTenantTestCase):
         self.assertEqual(subfam.parent.canonical_name, 'Cypraeidae')
         self.assertEqual(subfam.parent.rank, 'FAMILY')
 
-        # Temporary name taxa are now imported with UNACCEPTED status
-        temp_name = Taxonomy.objects.get(
-            canonical_name='[unassigned] Decapodiformes',
-            rank='ORDER',
-        )
-        self.assertEqual(temp_name.taxonomic_status, 'UNACCEPTED')
-
         # Accepted species has ACCEPTED status and no accepted_taxonomy link
         accepted = Taxonomy.objects.get(
             canonical_name='[non-Uristidae] dawsoni',
@@ -121,17 +126,15 @@ class TestWormsTaxaUpload(FastTenantTestCase):
         extras = alt_rep.additional_data
         self.assertIn('AphiaID', extras)
 
-        # Temporary name taxa are now imported with UNACCEPTED status
-        scolodontidae = Taxonomy.objects.get(
-            canonical_name='[unassigned] Scolodontidae',
-            rank='SUBFAMILY',
-        )
-        self.assertEqual(scolodontidae.taxonomic_status, 'UNACCEPTED')
-        # Terrestrial tag is still attached to accepted/synonym terrestrial taxa
+        # "unaccepted" with an accepted name -> synonym of it, WoRMS status kept
         terr = Taxonomy.objects.get(
             canonical_name='×Acostitrapa',
             rank='GENUS',
         )
+        self.assertEqual(terr.taxonomic_status, 'SYNONYM')
+        self.assertEqual(terr.accepted_taxonomy.canonical_name, 'Centaurea')
+        self.assertEqual(terr.additional_data['WoRMS status'], 'unaccepted')
+        # Terrestrial tag is still attached to accepted/synonym terrestrial taxa
         self.assertTrue(terr.tags.filter(name='terrestrial').exists())
 
     @mock.patch('bims.scripts.taxa_upload_worms._try_set_col_id', return_value=False)
@@ -154,7 +157,11 @@ class TestWormsTaxaUpload(FastTenantTestCase):
         uploader.upload_session = upload_session
         uploader.start('utf-8')
 
-        self.assertEqual(uploader.error_list, [])
+        self.assertEqual(
+            [r for r in uploader.error_list
+             if not r['error_message'].startswith('Skipped:')],
+            [],
+        )
 
         self.assertTrue(
             TaxonGroupTaxonomy.objects.filter(
@@ -183,7 +190,11 @@ class TestWormsTaxaUpload(FastTenantTestCase):
         uploader.upload_session = self.upload_session
         uploader.start('utf-8')
 
-        self.assertEqual(uploader.error_list, [])
+        self.assertEqual(
+            [r for r in uploader.error_list
+             if not r['error_message'].startswith('Skipped:')],
+            [],
+        )
 
         albinus = Taxonomy.objects.get(
             canonical_name='[non-Uristidae] albinus',
@@ -689,11 +700,11 @@ class TestWormsTaxaUpload(FastTenantTestCase):
         self.assertIsNone(p._lineage_species_name(row))
 
     # ------------------------------------------------------------------
-    # unaccepted → UNACCEPTED
+    # unaccepted with no accepted name -> skipped (UNACCEPTED if opted in)
     # ------------------------------------------------------------------
 
     @mock.patch('bims.scripts.taxa_upload_worms.preferences')
-    def test_unaccepted_status_maps_to_unaccepted(self, mock_preferences):
+    def test_unaccepted_without_accepted_name_is_skipped(self, mock_preferences):
         mock_preferences.SiteSetting.auto_validate_taxa_on_upload = True
 
         class _P(WormsTaxaProcessor):
@@ -718,8 +729,13 @@ class TestWormsTaxaUpload(FastTenantTestCase):
             "DateLastModified": "", "LSID": "", "Parent AphiaID": "",
             "Storedpath": "", "Citation": "",
         }
-        _P().process_worms_data(row, self.taxon_group)
+        self.assertIsNone(_P().process_worms_data(row, self.taxon_group))
+        self.assertFalse(
+            Taxonomy.objects.filter(canonical_name='Oldname antiquus').exists())
 
+        p = _P()
+        p.skip_unaccepted = False
+        p.process_worms_data(row, self.taxon_group)
         t = Taxonomy.objects.get(canonical_name='Oldname antiquus')
         self.assertEqual(t.taxonomic_status, 'UNACCEPTED')
 
@@ -753,12 +769,23 @@ class TestWormsTaxaUpload(FastTenantTestCase):
         def finish_processing_row(self, row, taxonomy): pass
 
     @mock.patch('bims.scripts.taxa_upload_worms.preferences')
-    def test_nomen_nudum_pointing_to_itself_is_unaccepted(self, mock_preferences):
+    def test_nomen_nudum_pointing_to_itself_is_skipped(self, mock_preferences):
         mock_preferences.SiteSetting.auto_validate_taxa_on_upload = True
         row = self._no_accepted_row(
             9001, "Caridina barombi", "nomen nudum",
             accepted_id=9001, accepted_name="Caridina barombi")
-        self._Proc().process_worms_data(row, self.taxon_group)
+        self.assertIsNone(self._Proc().process_worms_data(row, self.taxon_group))
+        self.assertFalse(Taxonomy.objects.filter(aphia_id=9001).exists())
+
+    @mock.patch('bims.scripts.taxa_upload_worms.preferences')
+    def test_unaccepted_opt_in_is_never_published(self, mock_preferences):
+        mock_preferences.SiteSetting.auto_validate_taxa_on_upload = True
+        row = self._no_accepted_row(
+            9001, "Caridina barombi", "nomen nudum",
+            accepted_id=9001, accepted_name="Caridina barombi")
+        proc = self._Proc()
+        proc.skip_unaccepted = False
+        proc.process_worms_data(row, self.taxon_group)
 
         t = Taxonomy.objects.get(aphia_id=9001)
         self.assertEqual(t.taxonomic_status, 'UNACCEPTED')
@@ -775,7 +802,7 @@ class TestWormsTaxaUpload(FastTenantTestCase):
     @mock.patch('bims.scripts.taxa_upload_worms.preferences')
     def test_reharvest_keeps_pending_proposal_edits(self, mock_preferences):
         mock_preferences.SiteSetting.auto_validate_taxa_on_upload = False
-        row = self._no_accepted_row(9010, "Caridina edita", "nomen nudum")
+        row = self._no_accepted_row(9010, "Caridina edita", "nomen dubium")
         t = self._Proc().process_worms_data(row, self.taxon_group)
         proposal = TaxonomyUpdateProposal.objects.get(
             original_taxonomy=t, taxon_group=self.taxon_group, status='pending')
@@ -792,7 +819,7 @@ class TestWormsTaxaUpload(FastTenantTestCase):
     @mock.patch('bims.scripts.taxa_upload_worms.preferences')
     def test_reharvest_clears_stale_self_link(self, mock_preferences):
         mock_preferences.SiteSetting.auto_validate_taxa_on_upload = True
-        row = self._no_accepted_row(9003, "Caridina sharmai", "nomen nudum")
+        row = self._no_accepted_row(9003, "Caridina sharmai", "taxon inquirendum")
         t = self._Proc().process_worms_data(row, self.taxon_group)
         t.accepted_taxonomy = t
         t.save()
@@ -801,7 +828,7 @@ class TestWormsTaxaUpload(FastTenantTestCase):
 
         t.refresh_from_db()
         self.assertIsNone(t.accepted_taxonomy)
-        self.assertEqual(t.taxonomic_status, 'UNACCEPTED')
+        self.assertEqual(t.taxonomic_status, 'DOUBTFUL')
 
     @mock.patch('bims.scripts.taxa_upload_worms.preferences')
     def test_nomen_dubium_without_accepted_name_is_doubtful(self, mock_preferences):
@@ -812,6 +839,38 @@ class TestWormsTaxaUpload(FastTenantTestCase):
         t = Taxonomy.objects.get(aphia_id=9002)
         self.assertEqual(t.taxonomic_status, 'DOUBTFUL')
         self.assertIsNone(t.accepted_taxonomy)
+        self.assertEqual(t.additional_data['WoRMS status'], 'nomen dubium')
+
+    @mock.patch('bims.scripts.taxa_upload_worms.preferences')
+    def test_unassessed_without_accepted_name_is_doubtful(self, mock_preferences):
+        mock_preferences.SiteSetting.auto_validate_taxa_on_upload = True
+        row = self._no_accepted_row(9004, "Caridina nilotica", "unassessed")
+        self._Proc().process_worms_data(row, self.taxon_group)
+        self.assertEqual(
+            Taxonomy.objects.get(aphia_id=9004).taxonomic_status, 'DOUBTFUL')
+
+    @mock.patch('bims.scripts.taxa_upload_worms.preferences')
+    def test_doubtful_status_with_accepted_name_is_synonym(self, mock_preferences):
+        mock_preferences.SiteSetting.auto_validate_taxa_on_upload = True
+        row = self._no_accepted_row(
+            9005, "Caridina typus", "nomen dubium",
+            accepted_id=9006, accepted_name="Caridina africana")
+        t = self._Proc().process_worms_data(row, self.taxon_group)
+
+        self.assertEqual(t.taxonomic_status, 'SYNONYM')
+        self.assertEqual(t.accepted_taxonomy.canonical_name, 'Caridina africana')
+        self.assertEqual(t.additional_data['WoRMS status'], 'nomen dubium')
+
+    @mock.patch('bims.scripts.taxa_upload_worms.preferences')
+    def test_unmapped_status_with_accepted_name_is_synonym(self, mock_preferences):
+        mock_preferences.SiteSetting.auto_validate_taxa_on_upload = True
+        row = self._no_accepted_row(
+            9007, "Caridina vetus", "temporary name",
+            accepted_id=9008, accepted_name="Caridina nova")
+        t = self._Proc().process_worms_data(row, self.taxon_group)
+
+        self.assertEqual(t.taxonomic_status, 'SYNONYM')
+        self.assertEqual(t.accepted_taxonomy.canonical_name, 'Caridina nova')
 
     # ------------------------------------------------------------------
     # Subspecies parent chain: Species intermediate created correctly
