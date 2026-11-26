@@ -1,3 +1,4 @@
+import copy
 import json
 import re
 from datetime import date
@@ -954,6 +955,7 @@ class Taxonomy(AbstractTaxonomy):
             update_taxon_with_gbif = True
             del self.additional_data['fetch_gbif']
         species_name = ''
+        hierarchical_data_before = copy.deepcopy(self.hierarchical_data or {})
         if not self.hierarchical_data or 'species_name' not in self.hierarchical_data:
             species_name = self.species_name
             genus_name = self.genus_name
@@ -971,6 +973,14 @@ class Taxonomy(AbstractTaxonomy):
             self.hierarchical_data['genus_name'] = genus_name
         elif ('species_name' not in self.hierarchical_data or not self.hierarchical_data['species_name']) and cur_idx and cur_idx >= species_idx:
             self.hierarchical_data['species_name'] = species_name
+
+        update_fields = kwargs.get('update_fields')
+        if (
+            update_fields is not None
+            and 'hierarchical_data' not in update_fields
+            and (self.hierarchical_data or {}) != hierarchical_data_before
+        ):
+            kwargs['update_fields'] = list(update_fields) + ['hierarchical_data']
 
         super(Taxonomy, self).save(*args, **kwargs)
 
