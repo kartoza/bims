@@ -462,6 +462,19 @@ def approve_unvalidated_taxa_by_group(
     failed_ids: list[int] = []
     approved_taxa_names: list[str] = []
 
+    def report_progress():
+        if not self.request.id:
+            # Called directly (not through celery): nothing to report to.
+            return
+        self.update_state(
+            state="PROGRESS",
+            meta={"processed": approved + failed, "approved": approved,
+                  "failed": failed, "total": total},
+        )
+
+    report_progress()
+    last_report = time.monotonic()
+
     for link in _iter_queryset(tgt_qs, chunk_size=chunk_size):
         taxon: Taxonomy = link.taxonomy
         group: TaxonGroup = link.taxongroup
@@ -508,12 +521,10 @@ def approve_unvalidated_taxa_by_group(
                 "Failed on TaxonGroupTaxonomy id=%s (taxon=%s, group=%s): %s",
                 link.id, taxon.id, group.id, exc
             )
-
-        if approved and (approved + failed) % 500 == 0:
-            self.update_state(
-                state="PROGRESS",
-                meta={"processed": approved + failed, "approved": approved, "failed": failed, "total": total},
-            )
+            
+        if time.monotonic() - last_report >= 3:
+            report_progress()
+            last_report = time.monotonic()
 
     try:
         if approved > 0:

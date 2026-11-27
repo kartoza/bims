@@ -90,25 +90,65 @@ function renderTextDiff(data, { stackedOnNarrow = true, showLabels = false } = {
   return escapeHtml(String(data));
 }
 
-async function pollTaskStatus(taskId, { intervalMs = 1500, maxAttempts = 200 } = {}) {
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+class TaskStillRunningError extends Error {}
+
+async function pollTaskStatus(taskId, {
+    intervalMs = 2000,
+    stallMs = 30 * 60 * 1000,
+    maxErrors = 30,
+    onProgress = null,
+} = {}) {
+    let lastChange = Date.now();
+    let lastKey = null;
+    let errors = 0;
+    while (true) {
         try {
             const res = await fetch(`/api/celery-status/${taskId}/`, { credentials: 'same-origin' });
             if (!res.ok) throw new Error('Status request failed');
             const data = await res.json();
+            errors = 0;
 
             if (['SUCCESS', 'FAILURE', 'REVOKED'].includes(data.state)) {
                 return data;
             }
+            const key = `${data.state}:${data.progress ? data.progress.processed : ''}`;
+            if (key !== lastKey) {
+                lastKey = key;
+                lastChange = Date.now();
+            }
+            if (onProgress) onProgress(data);
         } catch (e) {
             console.warn('Polling error:', e);
+            if (++errors >= maxErrors) {
+                throw new TaskStillRunningError('Could not get the status of the task.');
+            }
+        }
+        if (Date.now() - lastChange > stallMs) {
+            throw new TaskStillRunningError('The task has not reported progress for a while.');
         }
         await new Promise(r => setTimeout(r, intervalMs));
     }
-    throw new Error('Polling timed out');
+}
+
+function showBatchApproveProgress(data) {
+    const $body = $('#processingModal .modal-body');
+    const progress = data.progress;
+    if (data.state === 'PENDING') {
+        $body.text('Waiting for the batch approval to start...');
+    } else if (progress && progress.total) {
+        const percent = Math.floor(progress.processed * 100 / progress.total);
+        $body.text(
+            `Approving taxa: ${progress.processed} of ${progress.total} (${percent}%)` +
+            (progress.failed ? `, ${progress.failed} failed` : '') +
+            '. You can close this page, an email is sent when it is done.'
+        );
+    }
 }
 
 async function startBatchApprove(taxonGroupId, includeChildren = true) {
+    const $processingBody = $('#processingModal .modal-body');
+    const processingText = $processingBody.text();
+    $('#processingModal').one('hidden.bs.modal', () => $processingBody.text(processingText));
     $('#processingModal').modal({ backdrop: 'static', keyboard: false });
     $('#processingModal').modal('show');
 
@@ -133,7 +173,9 @@ async function startBatchApprove(taxonGroupId, includeChildren = true) {
 
         const { task_id } = await res.json();
 
-        const result = await pollTaskStatus(task_id);
+        const result = await pollTaskStatus(task_id, {
+            onProgress: showBatchApproveProgress
+        });
 
         $('#processingModal').modal('hide');
 
@@ -147,7 +189,12 @@ async function startBatchApprove(taxonGroupId, includeChildren = true) {
             location.reload();
         });
     } catch (e) {
-        $('#statusModalBody').text(`Failed to start/complete batch approve: ${e.message}`);
+        $('#statusModalBody').text(
+            e instanceof TaskStillRunningError
+                ? `${e.message} The batch approval may still be running in the background; ` +
+                  'an email is sent when it is done. Reload the page later to see the result.'
+                : `Failed to start/complete batch approve: ${e.message}`
+        );
         $('#statusModal').modal('show');
         setTimeout(() => {
             $('#processingModal').modal('hide');
