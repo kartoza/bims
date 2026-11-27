@@ -22,6 +22,8 @@ class CeleryStatus(APIView):
             'state': task.state,
             'result': str(task.result)
         }
+        if task.state == 'PROGRESS' and isinstance(task.info, dict):
+            json_response['progress'] = task.info
 
         if session == 'upload':
             try:
