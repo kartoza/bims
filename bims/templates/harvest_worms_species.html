@@ -132,12 +132,15 @@
                                     {% if request.POST.include_unaccepted == '1' %}checked{% endif %}
                                 >
                                 <label class="form-check-label" for="include-unaccepted">
-                                    Include unaccepted names
+                                    Include unaccepted names without an accepted name
                                 </label>
                                 <small class="form-text text-muted">
-                                    When unchecked (default), names that WoRMS marks as
-                                    "unaccepted" (synonyms, superseded combinations, misspellings, etc.)
-                                    are skipped and only accepted taxa are imported.
+                                    Names that are not accepted in WoRMS but have an accepted name
+                                    are always imported as synonyms of it. Names with no accepted
+                                    name are imported as doubtful if WoRMS marks them as nomen dubium,
+                                    taxon inquirendum or unassessed. All other names with no accepted
+                                    name are skipped, unless this is checked, in which case they are
+                                    imported as unaccepted.
                                 </small>
                             </div>
                         </div>

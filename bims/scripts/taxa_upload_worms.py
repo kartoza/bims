@@ -87,6 +87,9 @@ class WormsTaxaProcessor(TaxaProcessor):
         """
         return None
 
+    def handle_skip(self, row, reason: str):
+        """Called when a row is deliberately not imported."""
+
     @staticmethod
     def row_value(row, key, all_keys=None):
         """
@@ -167,6 +170,75 @@ class WormsTaxaProcessor(TaxaProcessor):
 
     # Statuses that become DOUBTFUL when WoRMS has no accepted name
     DOUBTFUL_STATUS_KEYS = {"nomen dubium", "taxon inquirendum", "unassessed"}
+
+    # Non-accepted names with no accepted name in WoRMS (and not doubtful)
+    # are UNACCEPTED and skipped. Set False to import them as UNACCEPTED.
+    skip_unaccepted = True
+
+    @staticmethod
+    def _status_key(row: dict) -> tuple[str, str]:
+        status_raw = (row.get(WORMS_COLUMN_NAMES["status"]) or "").strip()
+        status_key = status_raw.lower().replace("–", "-").replace("—", "-")
+        return status_raw, status_key
+
+    @staticmethod
+    def _row_aphia_id(row: dict) -> int | None:
+        try:
+            return int(row.get(WORMS_COLUMN_NAMES["aphia_id"]))
+        except (ValueError, TypeError):
+            return None
+
+    def _has_accepted_name(self, row: dict, canonical_name: str = "") -> bool:
+        """
+        True if WoRMS points this row to a *different* accepted taxon.
+        Rows that point back to themselves (e.g. a nomen nudum whose
+        valid_name is its own name) have no accepted name.
+        """
+        accepted_name = (row.get(WORMS_COLUMN_NAMES["sci_name_acc"]) or "").strip()
+        if not accepted_name:
+            return False
+        aphia_id = self._row_aphia_id(row)
+        accepted_aphia_raw = row.get(WORMS_COLUMN_NAMES["aphia_id_acc"])
+        if aphia_id is not None and str(accepted_aphia_raw).strip() == str(aphia_id):
+            return False
+        if not canonical_name:
+            canonical_name = (row.get(WORMS_COLUMN_NAMES["sci_name"]) or "").strip()
+        return accepted_name.lower() != canonical_name.lower()
+
+    def resolve_status(self, row: dict, canonical_name: str = "") -> str | None:
+        """
+        FADA status for a WoRMS row:
+
+        - "accepted" -> ACCEPTED
+        - any other status with an accepted name in WoRMS -> SYNONYM
+        - no accepted name: nomen dubium / taxon inquirendum / unassessed
+          -> DOUBTFUL, everything else -> UNACCEPTED (skipped by default)
+
+        Statuses that are accepted-equivalent (e.g. nomen novum) stay
+        ACCEPTED when they have no accepted name of their own.
+        """
+        status_raw, status_key = self._status_key(row)
+        if status_key == "accepted":
+            return "ACCEPTED"
+        if self._has_accepted_name(row, canonical_name):
+            return "SYNONYM"
+        if self.STATUS_MAP.get(status_key) == "ACCEPTED":
+            return "ACCEPTED"
+        if status_key in self.DOUBTFUL_STATUS_KEYS:
+            return "DOUBTFUL"
+        return "UNACCEPTED"
+
+    def skip_reason(self, row: dict, canonical_name: str = "") -> str | None:
+        """Why this row should not be imported, or None to import it."""
+        status_raw, status_key = self._status_key(row)
+        if status_key in self.SKIP_STATUSES:
+            return f"status {status_raw!r}"
+        if (
+            self.skip_unaccepted
+            and self.resolve_status(row, canonical_name) == "UNACCEPTED"
+        ):
+            return f"WoRMS status {status_raw or 'empty'!r} with no accepted name"
+        return None
 
     HABITAT_TAGS = [
         ("Marine", "marine"),
@@ -372,58 +444,41 @@ class WormsTaxaProcessor(TaxaProcessor):
             The processed Taxonomy instance, or None if the row was
             skipped (unsupported status/rank or invalid parent).
         """
-        status_raw = (row.get(WORMS_COLUMN_NAMES["status"]) or "").strip()
-        status_key = status_raw.lower().replace("–", "-").replace("—", "-")
-        if status_key in self.SKIP_STATUSES:
-            logger.debug("Skipping AphiaID=%s: status %r", row.get(WORMS_COLUMN_NAMES["aphia_id"]), status_raw)
-            return
+        status_raw, status_key = self._status_key(row)
 
         worms_rank = row.get(WORMS_COLUMN_NAMES["rank"])
         rank = self._map_rank(worms_rank)
         if not rank:
             self.handle_error(row, f"Unsupported/empty taxonRank: {worms_rank}")
             return
-        taxonomic_status = self.STATUS_MAP.get(status_key, status_raw.upper() or None)
-
-        is_accepted = status_raw.lower() == "accepted"
-        accepted_name = (row.get(WORMS_COLUMN_NAMES["sci_name_acc"]) or "").strip()
-        accepted_auth = _strip_html(row.get(WORMS_COLUMN_NAMES["authority_acc"]))
-        accepted_full = f"{accepted_name} {accepted_auth}".strip() if accepted_name else ""
 
         canonical_name, scientific_name = self._compose_worms_scientific(row, rank)
+
+        reason = self.skip_reason(row, canonical_name)
+        if reason:
+            logger.debug(
+                "Skipping AphiaID=%s: %s",
+                row.get(WORMS_COLUMN_NAMES["aphia_id"]), reason)
+            self.handle_skip(row, reason)
+            return
+
+        is_accepted = status_key == "accepted"
+        has_accepted_name = not is_accepted and self._has_accepted_name(row, canonical_name)
+        taxonomic_status = self.resolve_status(row, canonical_name)
+
+        accepted_name = ""
+        accepted_full = ""
+        if has_accepted_name:
+            accepted_name = (row.get(WORMS_COLUMN_NAMES["sci_name_acc"]) or "").strip()
+            accepted_auth = _strip_html(row.get(WORMS_COLUMN_NAMES["authority_acc"]))
+            accepted_full = f"{accepted_name} {accepted_auth}".strip()
 
         parent = self._ensure_parent_chain(row, rank)
         if parent and parent.canonical_name.lower() == canonical_name.lower():
             self.handle_error(row, "Parent cannot have the same name as the taxon")
             return
 
-        aphia_id_int = None
-        aphia_id_val = row.get(WORMS_COLUMN_NAMES["aphia_id"])
-        if aphia_id_val is not None:
-            try:
-                aphia_id_int = int(aphia_id_val)
-            except (ValueError, TypeError):
-                pass
-
-        # An accepted name only exists if WoRMS points to a *different* taxon.
-        # Rows that point back to themselves (e.g. a nomen nudum whose
-        # valid_name is its own name) have no accepted name.
-        accepted_aphia_raw = row.get(WORMS_COLUMN_NAMES["aphia_id_acc"])
-        points_to_self = (
-            (aphia_id_int is not None and str(accepted_aphia_raw) == str(aphia_id_int))
-            or accepted_name.lower() == canonical_name.lower()
-        )
-        has_accepted_name = bool(accepted_name) and not points_to_self
-        if not is_accepted and not has_accepted_name:
-            accepted_name = ""
-            if status_key not in self.STATUS_MAP or self.STATUS_MAP[status_key] != "ACCEPTED":
-                taxonomic_status = (
-                    "DOUBTFUL" if status_key in self.DOUBTFUL_STATUS_KEYS
-                    else "UNACCEPTED"
-                )
-        elif not is_accepted and status_key not in self.STATUS_MAP:
-            # Accepted name exists but the status has no explicit mapping
-            taxonomic_status = "SYNONYM"
+        aphia_id_int = self._row_aphia_id(row)
 
         existing = None
         if aphia_id_int:
@@ -456,7 +511,7 @@ class WormsTaxaProcessor(TaxaProcessor):
 
         is_synonym = False
 
-        if not is_accepted and not has_accepted_name:
+        if not has_accepted_name:
             # Drop any self/stale link left by an earlier harvest
             taxonomy.accepted_taxonomy = None
 
@@ -465,7 +520,7 @@ class WormsTaxaProcessor(TaxaProcessor):
             if 'synonym' in taxonomic_status.lower():
                 is_synonym = True
 
-        if resolve_accepted and not is_accepted and accepted_name:
+        if resolve_accepted and has_accepted_name:
             accepted_parent = None
             acc_rank = rank
             accepted_aphia_id_int = None
@@ -608,6 +663,9 @@ class WormsTaxaCSVUpload(DataCSVUpload, WormsTaxaProcessor):
 
     def handle_error(self, row, message):
         self.error_file(error_row=row, error_message=message)
+
+    def handle_skip(self, row, reason):
+        self.error_file(error_row=row, error_message=f"Skipped: {reason}")
 
     def finish_processing_row(self, row, taxonomy):
         taxon_group = self.upload_session.module_group

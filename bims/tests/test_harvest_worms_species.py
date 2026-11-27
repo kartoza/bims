@@ -323,7 +323,8 @@ class TestHarvestWormsSpeciesTask(FastTenantTestCase):
         self.assertTrue(session.finished)
 
     # ------------------------------------------------------------------
-    # Unaccepted names are skipped unless include_unaccepted is set
+    # Non-accepted names: synonym if WoRMS has an accepted name, otherwise
+    # doubtful (nomen dubium etc.) or skipped unless include_unaccepted
     # ------------------------------------------------------------------
 
     def _run_with_unaccepted_child(self, mock_record, mock_children, additional):
@@ -331,16 +332,24 @@ class TestHarvestWormsSpeciesTask(FastTenantTestCase):
         accepted = _api_record(
             4001, 'Neophron percnopterus', 'species', 'accepted', genus='Neophron',
         )
-        unaccepted = _api_record(
+        synonym = _api_record(
             4002, 'Vultur percnopterus', 'species', 'unaccepted',
             genus='Vultur', valid_aphia_id=4001,
             valid_name='Neophron percnopterus',
+        )
+        orphan = _api_record(
+            4003, 'Vultur orphanus', 'species', 'unaccepted', genus='Vultur',
+        )
+        dubium = _api_record(
+            4004, 'Vultur dubius', 'species', 'nomen dubium', genus='Vultur',
         )
         mock_record.side_effect = lambda aphia_id, **kw: {
             1836: root, 4001: accepted,
         }.get(aphia_id)
         mock_children.side_effect = (
-            lambda aphia_id, **kw: [accepted, unaccepted] if aphia_id == 1836 else []
+            lambda aphia_id, **kw: (
+                [accepted, synonym, orphan, dubium] if aphia_id == 1836 else []
+            )
         )
         session = self._make_session(additional=additional)
         harvest_worms_species(session.id, schema_name=self.schema_name)
@@ -353,7 +362,7 @@ class TestHarvestWormsSpeciesTask(FastTenantTestCase):
     @mock.patch(_PATCH_RECORD)
     @mock.patch(_PATCH_CONNECT)
     @mock.patch(_PATCH_DISCONNECT)
-    def test_unaccepted_skipped_by_default(
+    def test_non_accepted_statuses_by_default(
         self, mock_dis, mock_con, mock_record, mock_children, mock_col, mock_prefs
     ):
         mock_prefs.SiteSetting.auto_validate_taxa_on_upload = True
@@ -362,16 +371,30 @@ class TestHarvestWormsSpeciesTask(FastTenantTestCase):
         )
 
         self.assertIn('Finished', session.status)
-        self.assertTrue(
-            Taxonomy.objects.filter(canonical_name='Neophron percnopterus').exists()
-        )
-        self.assertFalse(
-            Taxonomy.objects.filter(canonical_name='Vultur percnopterus').exists()
-        )
+        accepted = Taxonomy.objects.get(aphia_id=4001)
+        self.assertEqual(accepted.taxonomic_status, 'ACCEPTED')
+
+        # Has an accepted name -> synonym, original WoRMS status kept
+        synonym = Taxonomy.objects.get(aphia_id=4002)
+        self.assertEqual(synonym.taxonomic_status, 'SYNONYM')
+        self.assertEqual(synonym.accepted_taxonomy, accepted)
+        self.assertEqual(synonym.additional_data['WoRMS status'], 'unaccepted')
+
+        # No accepted name, nomen dubium -> doubtful
+        dubium = Taxonomy.objects.get(aphia_id=4004)
+        self.assertEqual(dubium.taxonomic_status, 'DOUBTFUL')
+        self.assertIsNone(dubium.accepted_taxonomy)
+
+        # No accepted name, unaccepted -> skipped
+        self.assertFalse(Taxonomy.objects.filter(aphia_id=4003).exists())
         # Marked processed so a resume doesn't revisit it
-        self.assertIn(4002, session.additional_data['processed_aphia_ids'])
+        self.assertIn(4003, session.additional_data['processed_aphia_ids'])
         with open(session.log_file.path) as fh:
-            self.assertIn('AphiaID=4002 (Vultur percnopterus, unaccepted)', fh.read())
+            self.assertIn(
+                "AphiaID=4003 (Vultur orphanus, WoRMS status 'unaccepted' "
+                "with no accepted name)",
+                fh.read(),
+            )
 
     @mock.patch(_PATCH_PREFS)
     @mock.patch(_PATCH_COL_ID, return_value=False)
@@ -388,9 +411,10 @@ class TestHarvestWormsSpeciesTask(FastTenantTestCase):
             {'aphia_id': 1836, 'include_unaccepted': True},
         )
 
-        self.assertTrue(
-            Taxonomy.objects.filter(canonical_name='Vultur percnopterus').exists()
-        )
+        orphan = Taxonomy.objects.get(aphia_id=4003)
+        self.assertEqual(orphan.taxonomic_status, 'UNACCEPTED')
+        self.assertEqual(
+            Taxonomy.objects.get(aphia_id=4002).taxonomic_status, 'SYNONYM')
 
     @mock.patch(_PATCH_PREFS)
     @mock.patch(_PATCH_COL_ID, return_value=False)
@@ -404,13 +428,11 @@ class TestHarvestWormsSpeciesTask(FastTenantTestCase):
         mock_prefs.SiteSetting.auto_validate_taxa_on_upload = True
         mock_record.return_value = _api_record(
             5001, 'Oldname', 'genus', 'unaccepted',
-            valid_aphia_id=5002, valid_name='Newname',
         )
         session = self._make_session(5001)
         harvest_worms_species(session.id, schema_name=self.schema_name)
 
         self.assertFalse(Taxonomy.objects.filter(canonical_name='Oldname').exists())
-
 
     # ------------------------------------------------------------------
     # WoRMS request failures must not silently drop part of the tree

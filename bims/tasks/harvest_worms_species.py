@@ -65,7 +65,7 @@ class _SessionWormsTaxaProcessor:
     into the harvest log rather than raising.
     """
 
-    def __init__(self, log_fn):
+    def __init__(self, log_fn, skip_unaccepted: bool = True):
         self._log = log_fn
         from bims.scripts.taxa_upload_worms import WormsTaxaProcessor
 
@@ -84,6 +84,10 @@ class _SessionWormsTaxaProcessor:
                 return None
 
         self._processor = _Processor()
+        self._processor.skip_unaccepted = skip_unaccepted
+
+    def skip_reason(self, row: dict) -> str | None:
+        return self._processor.skip_reason(row)
 
     def process(self, row: dict, taxon_group, harvest_synonyms: bool,
                 fetch_col_id: bool = True):
@@ -174,21 +178,23 @@ def harvest_worms_species(session_id: int, schema_name: str):
         harvest_synonyms = session.harvest_synonyms
         # Only freshwater taxa are harvested unless explicitly disabled
         freshwater_only = additional.get("freshwater_only", True) is not False
-        processor = _SessionWormsTaxaProcessor(_log)
-        total_processed = len(processed_ids)
-
+        # Non-accepted names with an accepted name in WoRMS are always
+        # imported as synonyms. This only controls names with no accepted
+        # name that are not doubtful (nomen dubium, taxon inquirendum,
+        # unassessed): skipped by default, imported as UNACCEPTED if set.
         include_unaccepted = additional.get("include_unaccepted", False) is True
+        processor = _SessionWormsTaxaProcessor(
+            _log, skip_unaccepted=not include_unaccepted
+        )
+        total_processed = len(processed_ids)
 
         def _is_freshwater(row: dict) -> bool:
             return bool(row.get("Fresh"))
 
-        def _is_unaccepted(record: dict) -> bool:
-            return (record.get("status") or "").strip().lower() == "unaccepted"
-
         if freshwater_only:
             _log("Freshwater-only filter enabled - non-freshwater taxa will be skipped")
         if not include_unaccepted:
-            _log("Unaccepted names will be skipped")
+            _log("Unaccepted names without an accepted name will be skipped")
 
         fetch_error = None
         failed_aphia_id = None
@@ -233,8 +239,9 @@ def harvest_worms_species(session_id: int, schema_name: str):
         if aphia_id not in processed_ids and fetch_error is None:
             if root:
                 row = api_record_to_csv_row(root)
-                if not include_unaccepted and _is_unaccepted(root):
-                    _log(f"Skipped root AphiaID={aphia_id} (unaccepted)")
+                skip = processor.skip_reason(row)
+                if skip:
+                    _log(f"Skipped root AphiaID={aphia_id} ({skip})")
                     processed_ids.add(aphia_id)
                 elif freshwater_only and not _is_freshwater(row):
                     _log(f"Skipped root AphiaID={aphia_id} (not flagged as freshwater)")
@@ -284,10 +291,11 @@ def harvest_worms_species(session_id: int, schema_name: str):
 
                 if not already_processed:
                     row = api_record_to_csv_row(child)
-                    if not include_unaccepted and _is_unaccepted(child):
+                    skip = processor.skip_reason(row)
+                    if skip:
                         _log(
                             f"Skipped AphiaID={child_id} "
-                            f"({child.get('scientificname', '')}, unaccepted)"
+                            f"({child.get('scientificname', '')}, {skip})"
                         )
                         processed_ids.add(child_id)
                         since_last_save += 1
