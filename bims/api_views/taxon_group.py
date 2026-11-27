@@ -59,9 +59,22 @@ def _remove_single_taxon(taxonomy, taxon_group, delete_if_orphaned=True):
                                belongs to any other group. Defaults to True.
     """
     taxon_group.taxonomies.remove(taxonomy)
+    # Only the occurrences of the module the taxon is removed from lose it;
+    # they move to the other module of the taxon when it has exactly one.
+    # Occurrences of other modules (e.g. when the taxon is removed from a
+    # division group) keep theirs.
+    remaining_modules = list(TaxonGroup.objects.filter(
+        taxonomies=taxonomy,
+        category=TaxonomicGroupCategory.SPECIES_MODULE.name,
+    ).exclude(id=taxon_group.id)[:2])
     BiologicalCollectionRecord.objects.filter(
-        taxonomy=taxonomy
-    ).update(module_group=None)
+        taxonomy=taxonomy,
+        module_group=taxon_group,
+    ).update(
+        module_group=(
+            remaining_modules[0] if len(remaining_modules) == 1 else None
+        )
+    )
     if delete_if_orphaned and not TaxonGroupTaxonomy.objects.filter(taxonomy=taxonomy).exists():
         parent = taxonomy.parent
         taxonomy.delete()

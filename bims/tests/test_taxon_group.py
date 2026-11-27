@@ -24,7 +24,7 @@ from bims.models.taxon_group import (
     TAXON_GROUP_LEVEL_3, TAXON_GROUP_LEVEL_2
 )
 from bims.models.biological_collection_record import BiologicalCollectionRecord
-from bims.models import Taxonomy
+from bims.models import Taxonomy, TaxonomicGroupCategory
 from mobile.api_views.taxon_group import TaxonGroupTotalValidated
 
 
@@ -121,6 +121,42 @@ class TestTaxonGroup(TestCase):
             taxon_group_2.taxonomies.filter(id=taxonomy_id).exists(),
             "Taxonomy should still be linked to the other group"
         )
+
+    def test_remove_taxa_keeps_module_of_other_groups(self):
+        """Removing a taxon from a division group keeps the module of its
+        occurrences in the species module."""
+        taxonomy = TaxonomyF.create()
+        module = TaxonGroupF.create(
+            category=TaxonomicGroupCategory.SPECIES_MODULE.name,
+            taxonomies=(taxonomy,))
+        division = TaxonGroupF.create(
+            category=TaxonomicGroupCategory.DIVISION_GROUP.name,
+            taxonomies=(taxonomy,))
+        record = BiologicalCollectionRecordF.create(
+            taxonomy=taxonomy, module_group=module)
+
+        remove_taxa_from_taxon_group([taxonomy.id], division.id)
+
+        record.refresh_from_db()
+        self.assertEqual(record.module_group, module)
+
+    def test_remove_taxa_moves_records_to_the_other_module(self):
+        """Occurrences of the module the taxon is removed from move to the
+        other species module of the taxon."""
+        taxonomy = TaxonomyF.create()
+        module_1 = TaxonGroupF.create(
+            category=TaxonomicGroupCategory.SPECIES_MODULE.name,
+            taxonomies=(taxonomy,))
+        module_2 = TaxonGroupF.create(
+            category=TaxonomicGroupCategory.SPECIES_MODULE.name,
+            taxonomies=(taxonomy,))
+        record = BiologicalCollectionRecordF.create(
+            taxonomy=taxonomy, module_group=module_1)
+
+        remove_taxa_from_taxon_group([taxonomy.id], module_1.id)
+
+        record.refresh_from_db()
+        self.assertEqual(record.module_group, module_2)
 
     def test_remove_taxa_with_include_children_deletes_orphaned_parent_and_children(self):
         """include_children=True permanently deletes orphaned parent and child taxa."""
